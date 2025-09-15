@@ -219,7 +219,7 @@ void flex_barrier_init(){
         if (flex_get_cluster_id() == 0)
         {
             // __atomic_store_n(barrier, 0, __ATOMIC_RELAXED);
-            flex_reset_barrier(barrier);
+            flex_reset_barrier( (uint32_t *) barrier);
             flex_wakeup_all_clusters();
         }
         *cluster_reg = flex_get_enable_value();
@@ -236,8 +236,8 @@ void flex_global_barrier(){
 
     if (flex_is_dm_core()){
         flex_annotate_barrier(0);
-        if ((flex_get_barrier_num_cluster() - flex_get_enable_value()) == flex_amo_fetch_add(barrier)) {
-            flex_reset_barrier(barrier);
+        if ((flex_get_barrier_num_cluster() - flex_get_enable_value()) == flex_amo_fetch_add((uint32_t *) barrier)) {
+            flex_reset_barrier( (uint32_t *) barrier);
             flex_wakeup_all_clusters();
         }
         *cluster_reg = flex_get_enable_value();
@@ -258,9 +258,9 @@ void flex_global_barrier_polling(){
         // Remember previous iteration
         uint32_t prev_barrier_iteration = *barrier_iter;
 
-        if ((flex_get_barrier_num_cluster() - flex_get_enable_value()) == flex_amo_fetch_add(barrier)) {
-            flex_reset_barrier(barrier);
-            flex_amo_fetch_add(barrier_iter);
+        if ((flex_get_barrier_num_cluster() - flex_get_enable_value()) == flex_amo_fetch_add( (uint32_t *) barrier)) {
+            flex_reset_barrier( (uint32_t *) barrier);
+            flex_amo_fetch_add( (uint32_t *) barrier_iter);
         } else {
             while((*barrier_iter) == prev_barrier_iteration);
         }
@@ -280,11 +280,11 @@ void flex_barrier_xy_init(){
     if (flex_is_dm_core()){
         if (flex_get_cluster_id() == 0)
         {
-            flex_reset_barrier(barrier_y);
+            flex_reset_barrier( (uint32_t *) barrier_y);
             for (int i = 0; i < ARCH_NUM_CLUSTER_Y; ++i)
             {
                 volatile uint32_t * barrier_x = (volatile uint32_t *) (ARCH_SYNC_BASE+(cluster_index(pos_x_middel,i)*ARCH_SYNC_SIZE)+8);
-                flex_reset_barrier(barrier_x);
+                flex_reset_barrier( (uint32_t *) barrier_x);
             }
             flex_wakeup_all_clusters();
         }
@@ -309,13 +309,13 @@ void flex_global_barrier_xy(){
         volatile uint32_t * cluster_reg  = (volatile uint32_t *) ARCH_CLUSTER_REG_BASE;
 
         //First Barrier X
-        if ((flex_get_barrier_num_cluster_x() - flex_get_enable_value()) == flex_amo_fetch_add(barrier_x)) {
-            flex_reset_barrier(barrier_x);
+        if ((flex_get_barrier_num_cluster_x() - flex_get_enable_value()) == flex_amo_fetch_add( (uint32_t *) barrier_x)) {
+            flex_reset_barrier( (uint32_t *) barrier_x);
 
             //For cluster synced X, then sync Y
-            if ((flex_get_barrier_num_cluster_y() - flex_get_enable_value()) == flex_amo_fetch_add(barrier_y))
+            if ((flex_get_barrier_num_cluster_y() - flex_get_enable_value()) == flex_amo_fetch_add( (uint32_t *) barrier_y))
             {
-                flex_reset_barrier(barrier_y);
+                flex_reset_barrier( (uint32_t *) barrier_y);
                 flex_wakeup_all_clusters();
             }
         }
@@ -347,19 +347,19 @@ void flex_global_barrier_xy_polling(){
         uint32_t prev_barrier_iter_y     = *barrier_iy;
 
         //First Barrier X
-        if ((flex_get_barrier_num_cluster_x() - flex_get_enable_value()) == flex_amo_fetch_add(barrier_x)) {
-            flex_reset_barrier(barrier_x);
+        if ((flex_get_barrier_num_cluster_x() - flex_get_enable_value()) == flex_amo_fetch_add( (uint32_t *) barrier_x)) {
+            flex_reset_barrier( (uint32_t *) barrier_x);
 
             //For cluster synced X, then sync Y
-            if ((flex_get_barrier_num_cluster_y() - flex_get_enable_value()) == flex_amo_fetch_add(barrier_y))
+            if ((flex_get_barrier_num_cluster_y() - flex_get_enable_value()) == flex_amo_fetch_add( (uint32_t *) barrier_y))
             {
-                flex_reset_barrier(barrier_y);
-                flex_amo_fetch_add(barrier_iy);
+                flex_reset_barrier( (uint32_t *) barrier_y);
+                flex_amo_fetch_add( (uint32_t *) barrier_iy);
             } else {
                 while((*barrier_iy) == prev_barrier_iter_y);
             }
 
-            flex_amo_fetch_add(barrier_ix);
+            flex_amo_fetch_add( (uint32_t *) barrier_ix);
         } else {
             while((*barrier_ix) == prev_barrier_iter_x);
         }

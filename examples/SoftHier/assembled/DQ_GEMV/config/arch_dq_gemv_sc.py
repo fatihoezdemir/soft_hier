@@ -25,7 +25,7 @@ class FlexClusterArch:
         self.num_cluster_y           = 4
         self.num_core_per_cluster    = 3
 
-        self.cluster_tcdm_bank_width = 32
+        self.cluster_tcdm_bank_width = 64
         self.cluster_tcdm_bank_nb    = 128
 
         self.cluster_tcdm_base       = 0x00000000
@@ -42,9 +42,14 @@ class FlexClusterArch:
         self.cluster_reg_size        = 0x00000200
 
         #Spatz Vector Unit
-        self.spatz_attaced_core_list = []
-        self.spatz_num_vlsu_port     = 8
-        self.spatz_num_function_unit = 8
+        self.spatz_attaced_core_list = [0]
+        self.spatz_num_vlsu_port     = 4
+        self.spatz_num_function_unit = 4
+        self.spatz_vlsu_port_width   = 64
+        # By defalut (1), gather within vreg have the same bandwidth as VPU
+        # Too pass this value to .inc files, simply x100 (i.e. 1.5 --> 150)
+        # We handle this ratio in the Spatz timing model (rv32v.hpp)
+        self.spatz_vreg_gather_eff = 100
 
         #RedMule
         self.redmule_ce_height       = 128

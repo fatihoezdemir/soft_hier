@@ -386,3 +386,12 @@ def write_index_to_header_multi_format(f, name, mat, fmt='auto', array_c_type='u
     # Optional alias
     f.write(f'static const {array_c_type} * const {name}_data = {name};\n\n')
 
+def write_indices_u16(f, name, idx_u8, section='.hbm'):  # idx_u8 shape [M, G, 2], uint8
+    packed = ((idx_u8[...,1].astype(np.uint16) << 8) |
+            idx_u8[...,0].astype(np.uint16)).reshape(-1)
+    f.write(f'__attribute__((section("{section}"))) '
+            f'static const uint16_t {name}[{packed.size}] = {{\n')
+    for i, w in enumerate(packed):
+        f.write(f'  0x{int(w):04X},')
+        if (i + 1) % 8 == 0: f.write('\n')
+    f.write('};\n\n')

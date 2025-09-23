@@ -52,14 +52,20 @@ class FlexClusterArch:
         self.spatz_vreg_gather_eff = 100
 
         #RedMule
-        self.redmule_ce_height       = 128
-        self.redmule_ce_width        = 32
-        self.redmule_ce_pipe         = 3
+        # self.redmule_ce_height       = 128
+        # self.redmule_ce_width        = 32
+        # self.redmule_ce_pipe         = 3
+        # self.redmule_elem_size       = 2
+        # self.redmule_queue_depth     = 1
+        # self.redmule_reg_base        = 0x20020000
+        # self.redmule_reg_size        = 0x00000200
+        self.redmule_ce_height       = 32
+        self.redmule_ce_width        = 16
+        self.redmule_ce_pipe         = 1
         self.redmule_elem_size       = 2
         self.redmule_queue_depth     = 1
         self.redmule_reg_base        = 0x20020000
         self.redmule_reg_size        = 0x00000200
-
         #IDMA
         self.idma_outstand_txn       = 16
         self.idma_outstand_burst     = 256

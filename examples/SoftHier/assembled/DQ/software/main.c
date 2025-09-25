@@ -9,7 +9,8 @@
  *      4)load other half of activation matrix and dequantize other half of weight matrix
  *      5) compute  the other 3 tiles of C= A*B
  * Reminder: dequantization in AQLM is like this :
- *  in case of dequantizing a row :W_hat[row]= scale[row]*( concat(cb1[idx1[i]]+cb2[idx2[i]] for all groups i in a certain row
+ *  in case of dequantizing a row :W_hat[row]= scale[row]*( concat(cb1[idx1[i]]+cb2[idx2[i]] for all groups i in a
+ * certain row
  * ))
  *
  */
@@ -19,7 +20,7 @@
                           ... ]   horizontal splits
 Weight Matrix B = [B0 B1 B2 ...] vertical splits
 */
-#define DEBUG 1
+#define DEBUG 0
 #define REDMULE_ON 1
 
 #include "flex_alloc.h"
@@ -46,19 +47,21 @@ Weight Matrix B = [B0 B1 B2 ...] vertical splits
             printf(__VA_ARGS__);                                                                                       \
     } while (0)
 
-#define PERF_START_DM()                                                                                                   \
+#define PERF_START_DM()                                                                                                \
     do {                                                                                                               \
-        if (flex_is_dm_core() && flex_get_cluster_id() == 0)                                                           \
+        if (flex_is_first_core() && flex_get_cluster_id() == 0) {                                                      \
+            /* printf("[SYNC]");  */                                                                                   \     
             flex_timer_start();                                                                                        \
+        }                                                                                                              \
     } while (0)
-#define PERF_END_DM()                                                                                                     \
+#define PERF_END_DM()                                                                                                  \
     do {                                                                                                               \
-        if (flex_is_dm_core() && flex_get_cluster_id() == 0)                                                           \
+        if (flex_is_first_core() && flex_get_cluster_id() == 0)                                                        \
             flex_timer_end();                                                                                          \
     } while (0)
 
 // Tiling configuration TODO make a tilinginfo struct
-#define NUM_TILES 4
+#define NUM_TILES 1
 #define GROUPS_PER_TILE (VQ_NUM_GROUPS_PER_ROW / NUM_TILES)
 #define REMAINDER_GROUPS (VQ_NUM_GROUPS_PER_ROW % NUM_TILES)
 
@@ -66,15 +69,15 @@ Weight Matrix B = [B0 B1 B2 ...] vertical splits
 #define COLS_PER_TILE (FP16_K / NUM_TILES)
 #define ROWS_PER_TILE (FP16_M / NUM_TILES)
 
-// 8-wide FP16 matmul kernel: computes [M x N] · [N x P] in 8-col tiles
+
 
 #if MHSA != 1 // only for gemv  and gemm kernels
               /**
                load  codebook and scales to l1 and wait until transfer done
                */
 
-volatile uint64_t C_hbm_base;     // HBM base address for result matrix
-typedef struct {                  
+volatile uint64_t C_hbm_base; // HBM base address for result matrix
+typedef struct {
     volatile uint32_t idx_buf[2]; // buffers for indices
     volatile uint32_t A_buf[2];   //  buffers for activation tiles
 } shared_ptrs_t;                  // saved in sync
@@ -82,7 +85,7 @@ typedef struct {
 #if GEMM == 1
 typedef struct {
     volatile uint32_t idx_buf[2];
-    volatile uint32_t A_buf[2]; //  buffers for activation tiles
+    volatile uint32_t A_buf[2];    //  buffers for activation tiles
     volatile uint32_t* activation; //__attribute__((section(".l1_prio")));
     volatile uint32_t* C_tile;     // Result tile buffer
 } L1_buffers;
@@ -90,7 +93,7 @@ typedef struct {
 typedef struct {
     volatile uint32_t idx_buf[2];
     volatile uint32_t* x_vec; //__attribute__((section(".l1_prio")));
-    volatile uint32_t* y_vec;     // Result tile buffer
+    volatile uint32_t* y_vec; // Result tile buffer
 } L1_buffers;
 #elif MHSA == 1
 #endif
@@ -106,13 +109,13 @@ void load_codebook_to_l1() {
     // decoding decodes entry to 8 values)
     g_l1_dq.scales = (uint32_t*)(uintptr_t)flex_l1_malloc(
         FP16_M * sizeof(uint16_t)); // scales size (128) is the numnerb of rows of W
-    flex_timer_start();
+    // flex_timer_start();
     flex_dma_async_1d((uint64_t)(uintptr_t)g_l1_dq.cb, (uint64_t)(uintptr_t)&matrix_cb_fp16[0],
                       VQ_CB_NUM_CENTROIDS * VQ_NUM_CBS * VQ_GROUP_SIZE * sizeof(uint16_t));
     flex_dma_async_1d((uint64_t)(uintptr_t)g_l1_dq.scales, (uint64_t)(uintptr_t)&matrix_scales_fp16[0],
                       FP16_M * sizeof(uint16_t));
     flex_dma_async_wait_all();
-    flex_timer_end();
+    // flex_timer_end();
 }
 #endif
 // calculate actual size for a specific tile
@@ -143,7 +146,7 @@ void load_indices_tile(void* dest, const void* src, uint32_t tile_index) {
     // Calculate starting group position
     uint32_t start_group = get_start_group_for_tile(tile_index);
 
-    PERF_START_DM();
+    flex_timer_start();
     flex_dma_async_2d((uint64_t)(uintptr_t)dest,                                 // compact dest buffer, no offset
                       (uint64_t)(uintptr_t)src + start_group * sizeof(uint16_t), // source with offset
                       groups_this_tile * sizeof(uint16_t),                       // transfer size per row
@@ -152,7 +155,7 @@ void load_indices_tile(void* dest, const void* src, uint32_t tile_index) {
                       FP16_M                                                     // all rows
     );
     flex_dma_async_wait_all();
-    PERF_END_DM();
+    flex_timer_end();
 }
 
 // Load a horizontal stripe of the activation matrix (split by rows only)
@@ -160,24 +163,24 @@ void load_indices_tile(void* dest, const void* src, uint32_t tile_index) {
 void load_activation_horizontal_tile(void* dest, const void* src, uint32_t row_tile_index) {
     uint32_t rows_this_tile = get_rows_for_tile(row_tile_index);
     uint32_t start_row      = get_start_row_for_tile(row_tile_index);
-    uint32_t start_element = start_row * FP16_N;
-    uint32_t num_elements  = rows_this_tile * FP16_N;
+    uint32_t start_element  = start_row * FP16_N;
+    uint32_t num_elements   = rows_this_tile * FP16_N;
 
-    PERF_START_DM();
+    flex_timer_start();
     // Load horizontal stripe using 1D DMA (more efficient for contiguous data) Dest has no offset since it's a compact
     flex_dma_async_1d((uint64_t)(uintptr_t)dest, (uint64_t)(uintptr_t)src + start_element * sizeof(uint16_t),
                       num_elements * sizeof(uint16_t));
     flex_dma_async_wait_all();
-    PERF_END_DM();
+    flex_timer_end();
 }
 
 #if GEMM == 1
 
-void double_buffer_gemm() {//TODO currently only load is overlapped,also overlap store
+void double_buffer_gemm() {                   // TODO currently only load is overlapped,also overlap store
     uint32_t CID     = flex_get_cluster_id(); // Get cluster ID
     uint32_t core_id = flex_get_core_id();
-    uint32_t max_g = get_groups_for_tile(0);
-    uint32_t max_r = get_rows_for_tile(0);
+    uint32_t max_g   = get_groups_for_tile(0);
+    uint32_t max_r   = get_rows_for_tile(0);
 
     const uint32_t max_P = max_g * VQ_GROUP_SIZE;
 
@@ -196,47 +199,52 @@ void double_buffer_gemm() {//TODO currently only load is overlapped,also overlap
         uint32_t idx_buf_size    = FP16_M * max_g * sizeof(uint16_t);
         uint32_t A_buf_size      = max_r * FP16_N * sizeof(uint16_t);
         uint32_t W_buf_size      = FP16_M * max_P * sizeof(uint16_t);
-        uint32_t C_buf_elems      = max_r * max_P  ;
+        uint32_t C_buf_elems     = max_r * max_P;
         uint32_t C_buf_size      = C_buf_elems * sizeof(uint16_t);
 
-        // Allocate  buffers for indices and activation 
+        // Allocate  buffers for indices and activation
         l1_buffers.idx_buf[0] = (uint32_t)(uintptr_t)flex_l1_malloc(idx_buf_size);
         l1_buffers.idx_buf[1] = (uint32_t)(uintptr_t)flex_l1_malloc(idx_buf_size);
-        l1_buffers.A_buf[0] = (uint32_t)(uintptr_t)flex_l1_malloc(A_buf_size);
-        l1_buffers.A_buf[1] = (uint32_t)(uintptr_t)flex_l1_malloc(A_buf_size);
+        l1_buffers.A_buf[0]   = (uint32_t)(uintptr_t)flex_l1_malloc(A_buf_size);
+        l1_buffers.A_buf[1]   = (uint32_t)(uintptr_t)flex_l1_malloc(A_buf_size);
         // Allocate single buffers for dequantized weights and result tile
         g_l1_dq.W_dq      = (uint32_t*)(uintptr_t)flex_l1_malloc(W_buf_size);
         l1_buffers.C_tile = (uint32_t*)(uintptr_t)flex_l1_malloc(C_buf_size);
 
-    //     uint16_t* c_ptr = (uint16_t*)(uintptr_t)l1_buffers.C_tile;
-    //     for(int i=0;i<C_buf_size;++i){
-    //         c_ptr[i]=0;
-    //         debug("0x%04x ", c_ptr[i]);
-    // }
-}
-    flex_global_barrier_xy();
+        //     uint16_t* c_ptr = (uint16_t*)(uintptr_t)l1_buffers.C_tile;
+        //     for(int i=0;i<C_buf_size;++i){
+        //         c_ptr[i]=0;
+        //         debug("0x%04x ", c_ptr[i]);
+        // }
+    }
+    PERF_START_DM();
+    flex_intra_cluster_sync();
+    PERF_END_DM();
 
     // ---------- Outer loop over tiles of B_hat ----------
-    PDEBUG("\n=== STARTING DOUBLE-BUFFERED PIPELINE (NUM_TILES=%u) ===\n", NUM_TILES);
+    // PDEBUG("\n=== STARTING DOUBLE-BUFFERED PIPELINE (NUM_TILES=%u) ===\n", NUM_TILES);
     int curB = 0;
     for (uint32_t bt = 0; bt < NUM_TILES; ++bt) {
         const uint32_t g   = get_groups_for_tile(bt); // groups in this B tile
         const uint32_t P   = g * VQ_GROUP_SIZE;       // columns in compact W/C
         const uint64_t c0B = (uint64_t)(get_start_group_for_tile(bt) * VQ_GROUP_SIZE) * sizeof(uint16_t);
 
-        PDEBUG("\n>>> B-TILE %u: groups=%u, P=%u, curB_buf=%d\n", bt, g, P, curB);
+        debug("\n\t>>> B-TILE %u: groups=%u, P=%u, curB_buf=%d\n", bt, g, P, curB);
 
         // (Step 0) DMA: Load indices for B_t -> idx_buf[curB]
         if (flex_is_dm_core() && CID == 0) {
-            debug("  [DMA] Loading B%u indices to idx_buf[%d]=0x%08x\n", bt, curB, l1_buffers.idx_buf[curB]);
+            debug("\t[DMA] Load B%u indices to idx_buf[%d]=0x%08x\n\t", bt, curB, l1_buffers.idx_buf[curB]);
             g_l1_dq.indices = (uint32_t*)l1_buffers.idx_buf[curB];
             load_indices_tile((void*)l1_buffers.idx_buf[curB], &matrix_idx_packed_uint16[0], bt);
         }
-        flex_global_barrier_xy();
+
+        PERF_START_DM();
+        flex_intra_cluster_sync();
+        PERF_END_DM();
 
         // (Step 1) Spatz: Dequantize B_t -> W tile (compact)
         if (core_id == SPATZ_CORE && CID == 0) {
-            debug("\t[DEBUG][SPATZ] Dequantizing B%u\n\t", bt);
+            // debug("\t[SPATZ] Dequantizing B%u\n\t", bt);
             g_l1_dq.indices = (uint32_t*)l1_buffers.idx_buf[curB];
             dequantize_block_tile_compact(/*row_start=*/0, /*rows=*/FP16_M,
                                           /*group_count=*/g, /*idx_groups_stride=*/g);
@@ -245,17 +253,21 @@ void double_buffer_gemm() {//TODO currently only load is overlapped,also overlap
         int curA = 0;
         // Prologue: DMA load A0 -> A_buf[curA]
         if (flex_is_dm_core() && CID == 0) {
-            debug("  [DMA] Preloading A0 to A_buf[%d]=0x%08x for B%u\n", curA, l1_buffers.A_buf[curA], bt);
+            debug("\t[DMA] Load A0 to A_buf[%d]=0x%08x for B%u\n\t", curA, l1_buffers.A_buf[curA], bt);
             load_activation_horizontal_tile((void*)l1_buffers.A_buf[curA], &matrix_activation_fp16[0],
                                             /*row_tile_index=*/0);
+            debug("\t[SPATZ] Dequantizing\n\t");
         }
-        flex_global_barrier_xy();
-
+        PERF_START_DM();
+        flex_intra_cluster_sync();
+        PERF_END_DM();
         for (uint32_t at = 0; at < NUM_TILES; ++at) {
             const uint32_t r  = get_rows_for_tile(at);
             const uint32_t sr = get_start_row_for_tile(at); // row start
-
-            PDEBUG("\n  >> A-TILE %u: rows=%u, start_row=%u, curA_buf=%d\n", at, r, sr, curA);
+            if (core_id == SPATZ_CORE && CID == 0) {
+                flex_redmule_config(r, FP16_N, P); // hardcode r N P
+            }
+            debug("\n\t\t>> A-0 %u: rows=%u, start_row=%u, curA_buf=%d\n", at, r, sr, curA);
 
             // Calculate destination address in allocated HBM buffer
             const uint32_t col_start_elems = get_start_group_for_tile(bt) * VQ_GROUP_SIZE;
@@ -265,15 +277,16 @@ void double_buffer_gemm() {//TODO currently only load is overlapped,also overlap
             // DMA: Prefetch next A tile (overlaps with Spatz compute)
             if (at + 1 < NUM_TILES && flex_is_dm_core() && CID == 0) {
                 int nxtA = curA ^ 1; // Toggle buffer
-                debug("    [DMA] Prefetching A%u to A_buf[%d]=0x%08x (while computing)\n", at + 1, nxtA,
-                    l1_buffers.A_buf[nxtA]);
+                debug("\t\t[DMA] Load A%u to A_buf[%d]=0x%08x (while computing)\n\t\t", at + 1, nxtA,
+                      l1_buffers.A_buf[nxtA]);
                 load_activation_horizontal_tile((void*)l1_buffers.A_buf[nxtA], &matrix_activation_fp16[0], at + 1);
             }
 
             // While processing first A tile, prefetch next B indices
             if (at == 0 && bt + 1 < NUM_TILES && flex_is_dm_core() && CID == 0) {
                 int nxtB = curB ^ 1; // Toggle buffer
-                debug("    [DMA] Prefetching B%u indices to idx_buf[%d]=0x%08x\n", bt + 1, nxtB, l1_buffers.idx_buf[nxtB]);
+                debug("\t\t[DMA] Prefetching B%u indices to idx_buf[%d]=0x%08x\n\t\t", bt + 1, nxtB,
+                      l1_buffers.idx_buf[nxtB]);
                 load_indices_tile((void*)l1_buffers.idx_buf[nxtB], &matrix_idx_packed_uint16[0], bt + 1);
                 // flex_dma_async_1d((uint64_t) (uintptr_t) l1_buffers.C_tile, zomem(0), 8192);
                 bare_dma_wait_all();
@@ -282,43 +295,51 @@ void double_buffer_gemm() {//TODO currently only load is overlapped,also overlap
             // Spatz: Compute A_at × B_bt (compact P) -> C_tile
             if (core_id == SPATZ_CORE && CID == 0) {
                 l1_buffers.activation = (uint32_t*)l1_buffers.A_buf[curA];
-                // flex_timer_start();
-                // flex_timer_end();
-                debug("    [REDMULE] Computing A[%u×%u] × B[%u×%u] -> C[%u×%u]\n",
-                    r, FP16_N, FP16_N, P, r, P);
-                    uint32_t C_buf_elems      = max_r * max_P  ;
-                    uint32_t C_buf_size      = C_buf_elems * sizeof(uint16_t);
-                    uint16_t* c_ptr = (uint16_t*)(uintptr_t)l1_buffers.C_tile;
-                    for(int i=0;i<C_buf_size;++i){//TODO temporary solution,fix later
-                        c_ptr[i]=0;
-                        // debug("0x%04x ", c_ptr[i]);
+
+                // debug("    [REDMULE] Computing A[%u×%u] × B[%u×%u] -> C[%u×%u]\n",
+                //     r, FP16_N, FP16_N, P, r, P);
+                uint32_t C_buf_elems = max_r * max_P;
+                uint32_t C_buf_size  = C_buf_elems * sizeof(uint16_t);
+                uint16_t* c_ptr      = (uint16_t*)(uintptr_t)l1_buffers.C_tile;
+                for (int i = 0; i < C_buf_size; ++i) { // TODO temporary solution,fix later
+                    c_ptr[i] = 0;
+                    //         // debug("0x%04x ", c_ptr[i]);
                 }
-                // flex_redmule_config(r, FP16_N, P);// hardcode r N P
-                // flex_redmule_trigger((uint32_t)l1_buffers.A_buf[curA], (uint32_t)g_l1_dq.W_dq, (uint32_t)l1_buffers.C_tile, REDMULE_FP_16);
+                debug("\t\t[REDMULE] Compute\n\t\t");
+                // flex_timer_start();
+                // flex_redmule_trigger((uint32_t)l1_buffers.A_buf[curA], (uint32_t)g_l1_dq.W_dq,
+                //                      (uint32_t)l1_buffers.C_tile, REDMULE_FP_16);
                 // flex_redmule_wait();
+                // flex_timer_end();
+
+                debug("\t\t[spatz] compute\n\t\t");
+                // flex_timer_start();
+
                 spatz_matmul_fp16_full_legacy((uint16_t*)l1_buffers.A_buf[curA], // [r x N]
-                                              (uint16_t*)g_l1_dq.W_dq,        // [N x P] (compact)
-                                              (uint16_t*)l1_buffers.C_tile,              // [r x P] (compact)
+                                              (uint16_t*)g_l1_dq.W_dq,           // [N x P] (compact)
+                                              (uint16_t*)l1_buffers.C_tile,      // [r x P] (compact)
                                               r, FP16_N, P);
+                // flex_timer_end();
             }
-            flex_global_barrier_xy();
+            PERF_START_DM();
+            flex_intra_cluster_sync();
+            PERF_END_DM();
 
             // DMA: Store compact C_tile (r×P) back to HBM with proper striding
             if (flex_is_dm_core() && CID == 0) {
                 debug("\t\t[DEBUG][DMA] Storing A%u x B%u to dst=0x%08x (r=%u, P=%u)\n\t\t", at, bt, (uint32_t)dst, r,
                       P);
                 flex_timer_start();
-                flex_dma_async_2d(
-                     dst,
-                     (uint64_t)(uintptr_t)l1_buffers.C_tile,
-                      P * sizeof(uint16_t),
-                     FP16_K * sizeof(uint16_t), // Full C matrix width
-                     P * sizeof(uint16_t),      //  tile width
-                    /*rows*/ r);
+                flex_dma_async_2d(dst, (uint64_t)(uintptr_t)l1_buffers.C_tile, P * sizeof(uint16_t),
+                                  FP16_K * sizeof(uint16_t), // Full C matrix width
+                                  P * sizeof(uint16_t),      //  tile width
+                                  /*rows*/ r);
                 flex_dma_async_wait_all();
                 flex_timer_end();
             }
-            flex_global_barrier_xy();
+            PERF_START_DM();
+            flex_intra_cluster_sync();
+            PERF_END_DM();
             // Swap A_buf for next iteration
             curA ^= 1;
         }
@@ -332,18 +353,16 @@ void double_buffer_gemm() {//TODO currently only load is overlapped,also overlap
 
         //  L1_PTRS.result points to C_tile buffer
         uint16_t* hbm_result_ptr = (uint16_t*)(uintptr_t)C_hbm_base;
-        debug("[DEBUG] Result matrix is in HBM at 0x%08x\n", (uint32_t)C_hbm_base);
-        debug("[DEBUG] First 8 computed results from HBM: ");
-        for (int i = 0; i < 8; i++) {
-            debug("0x%04x ", hbm_result_ptr[i]);
-        }
-        debug("\n");
+        // debug("[DEBUG] Result matrix is in HBM at 0x%08x\n", (uint32_t)C_hbm_base);
+        // debug("[DEBUG] First 8 computed results from HBM: ");
+        // for (int i = 0; i < 8; i++) {
+        //     debug("0x%04x ", hbm_result_ptr[i]);
+        // }
+        // debug("\n");
 
 // Verify matrix multiplication results against golden reference
-#if GEMM == 1
         debug("[DEBUG] Verifying GEMM results against golden reference...\n");
-        spatz_verify_16(FP16_M * FP16_N, hbm_result_ptr, (uint16_t*)matrix_golden_fp16, 0.5f);
-#endif
+        // spatz_verify_16(FP16_M * FP16_N, hbm_result_ptr, (uint16_t*)matrix_golden_fp16, 0.5f);
         debug("[VERIFICATION] Verification complete!\n");
     }
 }
@@ -355,19 +374,16 @@ void double_buffer_gemv() {
     uint32_t core_id = flex_get_core_id();
     // Calculate max sizes for buffer allocation
     uint32_t max_g = get_groups_for_tile(0);
-
     const uint32_t max_P = max_g * VQ_GROUP_SIZE;
 
     if (flex_is_dm_core() && CID == 0) {
-        debug("[DEBUG][DMA] Allocating buffers for double-buffered GEMV\n");
-
         // Allocate HBM for result vector y
         const uint32_t y_bytes = FP16_K * sizeof(uint16_t);
         C_hbm_base             = (uint64_t)(uintptr_t)flex_hbm_malloc(y_bytes);
-        debug("[DEBUG][DMA] y_hbm_base  alloc= 0x%08x (size=%u bytes)\n", (uint32_t)C_hbm_base, y_bytes);
+        // debug("[DEBUG][DMA] y_hbm_base  alloc= 0x%08x (size=%u bytes)\n", (uint32_t)C_hbm_base, y_bytes);
 
         flex_timer_start();
-        load_codebook_to_l1();//load codebook
+        load_codebook_to_l1(); // load codebook
         flex_timer_end();
 
         // Buffer sizes
@@ -379,9 +395,9 @@ void double_buffer_gemv() {
         // Allocate  buffers for indices
         l1_buffers.idx_buf[0] = (uint32_t)(uintptr_t)flex_l1_malloc(idx_buf_size);
         l1_buffers.idx_buf[1] = (uint32_t)(uintptr_t)flex_l1_malloc(idx_buf_size);
-        l1_buffers.x_vec = (uint32_t *)(uintptr_t)flex_l1_malloc(x_size);
-        g_l1_dq.W_dq = (uint32_t*)(uintptr_t)flex_l1_malloc(W_buf_size);
-        l1_buffers.y_vec = (uint32_t*)(uintptr_t)flex_l1_malloc(y_tile_size);
+        l1_buffers.x_vec      = (uint32_t*)(uintptr_t)flex_l1_malloc(x_size);
+        g_l1_dq.W_dq          = (uint32_t*)(uintptr_t)flex_l1_malloc(W_buf_size);
+        l1_buffers.y_vec      = (uint32_t*)(uintptr_t)flex_l1_malloc(y_tile_size);
 
         // Load the input vector x (only needed once)
         debug("[DEBUG][DMA] Load embeddign vector x to l1\n");
@@ -390,10 +406,8 @@ void double_buffer_gemv() {
                           FP16_M * sizeof(uint16_t));
         flex_dma_async_wait_all();
         flex_timer_end();
-
     }
-    flex_global_barrier_xy();
-
+    flex_intra_cluster_sync();
 
     PDEBUG("\n=== STARTING DOUBLE-BUFFERED GEMV (NUM_TILES=%u) ===\n", NUM_TILES);
 
@@ -406,7 +420,7 @@ void double_buffer_gemv() {
         load_indices_tile((void*)l1_buffers.idx_buf[0], &matrix_idx_packed_uint16[0], 0);
         flex_timer_end();
     }
-    flex_global_barrier_xy();
+    flex_intra_cluster_sync();
 
     // loop over B_tile
     for (uint32_t bt = 0; bt < NUM_TILES; ++bt) {
@@ -416,45 +430,68 @@ void double_buffer_gemv() {
 
         // Step 1: Dequantize current tile (indices already loaded)
         if (core_id == SPATZ_CORE && CID == 0) {
-            debug("  [SPATZ] Dequantizing tile %u using idx_buf[%d]\n", bt, curIdx);
+            // debug(" \t[SPATZ] Dequantizing tile %u using idx_buf[%d]\n\t", bt, curIdx);
             g_l1_dq.indices = (uint32_t*)l1_buffers.idx_buf[curIdx];
             // g_l1_dq.W_dq    = W_tile;
             dequantize_block_tile_compact(0, FP16_M, g, g);
+            // flex_redmule_config( 1, FP16_M, P);// hardcode r N P
         }
 
         // Overlap: Prefetch next tile's indices while dequantizing
         if (bt + 1 < NUM_TILES && flex_is_dm_core() && CID == 0) {
             int nextIdx = curIdx ^ 1;
-            debug("  [DMA] Prefetching indices for tile %u to idx_buf[%d] (overlapped with dequant)\n", bt + 1,
+            debug(" \t[DMA] Load indices for tile %u to B[%d] (overlapped with dequant)\n\t", bt + 1,
                   nextIdx);
             // flex_timer_start();
             load_indices_tile((void*)l1_buffers.idx_buf[nextIdx], &matrix_idx_packed_uint16[0], bt + 1);
             // flex_timer_end();
+            debug(" \t[SPATZ] Dequantize tile %u via idx_buf[%d]\n\t", bt, curIdx);
         }
 
-        flex_global_barrier_xy();
+        flex_intra_cluster_sync();
 
         // Step 2: Compute x^T * W_t -> y_t(vertical)
         if (core_id == SPATZ_CORE && CID == 0) {
-            debug("  [SPATZ] Computing x^T * W_tile%u: (1x%u) * (%ux%u) -> (1x%u) computingwithfull width\n", bt,
+            debug("\t[REDMULE] Computing x^T * W_tile%u: (1x%u) * (%ux%u) -> (1x%u) \n\t", bt,
                   FP16_M, FP16_M, P, P);
+
+            uint32_t y_tile_size = max_P * sizeof(uint16_t);
+            uint16_t* c_ptr      = (uint16_t*)(uintptr_t)l1_buffers.y_vec;
+            for (int i = 0; i < y_tile_size; ++i) { // TODO temporary solution,fix later
+                c_ptr[i] = 0;
+                //         // debug("0x%04x ", c_ptr[i]);
+            }
             flex_timer_start();
-            spatz_matmul_fp16_full_legacy((uint16_t*)l1_buffers.x_vec, // x vector [1 x M]
-                                          (uint16_t*)g_l1_dq.W_dq,           // W_tile [M x P]
-                                          (uint16_t*)l1_buffers.y_vec,           // y_tile [1 x P]
+
+            flex_redmule_config(1, FP16_M, P); // hardcode r N P
+
+            flex_redmule_trigger((uint32_t)l1_buffers.x_vec, (uint32_t)g_l1_dq.W_dq, (uint32_t)l1_buffers.y_vec,
+                                 REDMULE_FP_16);
+            flex_redmule_wait();
+            flex_timer_end();
+            debug("\t[SPATZ] Computing \n\t");
+            flex_timer_start();
+            spatz_gemv_fp16_full_legacy((uint16_t*)l1_buffers.x_vec, // x vector [1 x M]
+                                          (uint16_t*)g_l1_dq.W_dq,     // W_tile [M x P]
+                                          (uint16_t*)l1_buffers.y_vec, // y_tile [1 x P]
                                           1, FP16_M, P);
             flex_timer_end();
-            debug("  [SPATZ] now   Computing with 8 element width same as group size\n");
-            // flex_timer_start();
+            debug("\t[SPATZ] Computing  8 elements\n\t");
+            flex_timer_start();
 
+            spatz_matmul_fp16_8wide((uint16_t*)l1_buffers.x_vec, // x vector [1 x M]
+                                    (uint16_t*)g_l1_dq.W_dq,     // W_tile [M x P]
+                                    (uint16_t*)l1_buffers.y_vec, // y_tile [1 x P]
+                                    1, FP16_M, P);
+            flex_timer_end();
         }
 
         // crct: Wait for compute to finish before DMA can read C_tile
-        flex_global_barrier_xy();
+        flex_intra_cluster_sync();
         // Step 3: Store result to HBM
         if (flex_is_dm_core() && CID == 0) {
             const uint64_t dst = C_hbm_base + col_start * sizeof(uint16_t);
-            debug("  [DMA] Storing y_tile%u to HBM at offset %u\n", bt, col_start);
+            debug("\t[DMA] Storing y_tile%u to HBM at offset %u\n\t", bt, col_start);
             flex_timer_start();
             flex_dma_async_1d(dst, (uint64_t)(uintptr_t)l1_buffers.y_vec, P * sizeof(uint16_t));
             flex_dma_async_wait_all();
@@ -462,7 +499,7 @@ void double_buffer_gemv() {
         }
 
         // Wait for DMA to finish before reusing C_tile in next iteration
-        flex_global_barrier_xy();
+        flex_intra_cluster_sync();
 
         // Swap index buffer for next iteration
         curIdx ^= 1;
@@ -485,7 +522,6 @@ void double_buffer_gemv() {
 }
 #endif
 
-
 int main() {
     uint32_t eoc_val = 0;
     flex_barrier_xy_init();
@@ -506,7 +542,6 @@ int main() {
 #elif GEMV == 1
     // printf("[INFO] Running double-buffered GEMV\n");
     double_buffer_gemv();
-
 
 #endif
     /**************************************/

@@ -8,7 +8,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-// Debug print for uint16_t 
+// Debug print for uint16_t
 #define DEBUG_PRINT_U16(ptr, count, desc)                                                                              \
     do {                                                                                                               \
         printf("[DEBUG] First %d %s:\n", (count), (desc));                                                             \
@@ -24,7 +24,6 @@
     } while (0)
 
 #endif
-
 
 // TODO not valid for multicluster scenario, maybe create array of clusters?
 typedef struct {
@@ -58,7 +57,6 @@ void dequant_group(const uint16_t* a /*cb0[idx0[i]]*/, const uint16_t* b /*cb1[i
     // printf("  Out[0]=0x%04x Out[1]=0x%04x Out[2]=0x%04x (after store)\n", out[0],out[1],out[2]);
 }
 
-
 // Dequant a vertical tile into a buffer W_dq_tile
 // Layout: row-major [rows x tile_P], tile_P = group_count*8
 void dequantize_block_tile_compact(uint16_t row_start, uint16_t rows,
@@ -70,7 +68,7 @@ void dequantize_block_tile_compact(uint16_t row_start, uint16_t rows,
         const uint16_t* idx    = (const uint16_t*)(uintptr_t)g_l1_dq.indices; // COMPACT indices
         const uint16_t* scales = (const uint16_t*)(uintptr_t)g_l1_dq.scales;
         const uint16_t* cb0    = (const uint16_t*)(uintptr_t)g_l1_dq.cb;
-        const uint16_t* cb1 = cb0 + VQ_CB_NUM_CENTROIDS * VQ_GROUP_SIZE;
+        const uint16_t* cb1    = cb0 + VQ_CB_NUM_CENTROIDS * VQ_GROUP_SIZE;
 
         const uint16_t row_end = row_start + rows;
         const uint32_t tile_P  = group_count * VQ_GROUP_SIZE;

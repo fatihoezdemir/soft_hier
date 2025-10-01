@@ -141,6 +141,7 @@ def main():
         f.write(f'#define VQ_GROUP_SIZE {args.in_group_size} // \n')
         f.write(f'#define VQ_NUM_GROUPS_PER_ROW {int(in_features/args.in_group_size)} // how often we need to dequantize to get a full reconstructed row\n')
         f.write(f'#define VQ_TOTAL_GROUPS {int(out_features*in_features/args.in_group_size)} // number of dequantizations to fully dequantize the matrix\n')
+        f.write(f'#define VQ_NUM_SCALES {int(scales.shape[0])} // number of scales (1 scale per row)\n')
 
         f.write(f'#define VQ_NUM_CBS {int(args.num_codebooks)} // number of codebooks\n')
         f.write(f'#define VQ_CB_NUM_CENTROIDS {int(2**args.nbits_per_codebook)} // number of codebook entries (2^num_bits) \n\n')

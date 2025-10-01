@@ -27,38 +27,43 @@
 
 // TODO not valid for multicluster scenario, maybe create array of clusters?
 typedef struct {
-    volatile uint32_t* cb;      // codebook base in L1
-    volatile uint32_t* scales;  // scales in L1
-    volatile uint32_t* indices; // indices in L1
-    volatile uint32_t* W_dq;    // dequantized weights tile in L1
+    volatile uint16_t* cb;      // codebook base in L1
+    volatile uint16_t* scales;  // scales in L1
+    volatile uint16_t* indices; // indices in L1
+    volatile uint16_t* W_dq;    // dequantized weights tile in L1
 } L1_DQ_Handles;
 extern L1_DQ_Handles g_l1_dq;
 
-// TODO Try out to dequant full row (or multiple groups) with register grouping,
-// 8*16*sizeof(float16) bits
-
+void dequant_group_debug(const uint16_t* a /*cb0[idx0[i]]*/, const uint16_t* b /*cb1[idx1[i]]*/, const uint16_t* scale,
+                         uint16_t* out) {
+    asm volatile("vsetvli zero, %0, e16, m1, ta, ma" ::"r"(8u));
+    asm volatile("vle16.v v8, (%0)" ::"r"(a) : "v8", "memory"); // cb0[idx0]
+    asm volatile("vle16.v v9, (%0)" ::"r"(b) : "v9", "memory"); // cb1[idx1]
+    asm volatile("lhu t0, (%0)" ::"r"(scale) : "t0", "memory"); // Load scale and broadcast to vector
+    asm volatile("vmv.v.x v12, t0" ::: "t0", "v12");
+    asm volatile("vfadd.vv v10, v8, v9" ::: "v8", "v9", "v10");     // Add codebook entries
+    asm volatile("vfmul.vv v11, v10, v12" ::: "v10", "v12", "v11"); // Multiply by scale
+    asm volatile("vse16.v v11, (%0)" ::"r"(out) : "v11", "memory"); // Store result
+}
 void dequant_group(const uint16_t* a /*cb0[idx0[i]]*/, const uint16_t* b /*cb1[idx1[i]]*/, const uint16_t* scale,
                    uint16_t* out) {
     uint32_t vl;
     uint32_t gsize = 8;
     // FINALUse vector-vector multiply with scale broadcasting via vmv.v.x
-    asm volatile("vsetvli zero, %[gsize], e16, m1, ta, ma\n\t"
-                 "vle16.v  v8, (%[a])\n\t"    // cb0[idx0]
-                 "vle16.v  v9, (%[b])\n\t"    // cb1[idx1]
-                 "lhu t0, (%[sp])\n\t"        // load scale as integer
-                 "vmv.v.x v12, t0\n\t"        // broadcast scale to vector
-                 "vfadd.vv v10, v8, v9\n\t"   // sum
-                 "vfmul.vv v11, v10, v12\n\t" // vector-vector multiply
-                 "vse16.v  v11, (%[out])\n\t" // store
+    asm volatile("vsetvli zero, %[gsize], e16, m1, ta, ma\n\t" // observation:on o3 compiling, this instruction gets
+                                                               // optimized away if we precompute before
+                 "vle16.v  v0, (%[a])\n\t"   // cb0[idx0]
+                 "vle16.v  v1, (%[b])\n\t"   // cb1[idx1]
+                 "lhu t0, (%[sp])\n\t"       // load scale as integer
+                 "vmv.v.x v2, t0\n\t"        // broadcast scale to vector
+                 "vfadd.vv v3, v0, v1\n\t"   // sum
+                 "vfmul.vv v4, v3, v2\n\t"   // vector-vector multiply
+                 "vse16.v  v4, (%[out])\n\t" // store
                  :
                  : [a] "r"(a), [b] "r"(b), [out] "r"(out), [sp] "r"(scale), [gsize] "r"(8u)
-                 : "t0", "v8", "v9", "v10", "v11", "v12", "memory");
-
-    // printf("  Out[0]=0x%04x Out[1]=0x%04x Out[2]=0x%04x (after store)\n", out[0],out[1],out[2]);
+                 : "t0", "v0", "v1", "v2", "v3", "v4");
 }
 
-// Dequant a vertical tile into a buffer W_dq_tile
-// Layout: row-major [rows x tile_P], tile_P = group_count*8
 void dequantize_block_tile_compact(uint16_t row_start, uint16_t rows,
                                    uint16_t group_count,       // groups in this tile
                                    uint16_t idx_groups_stride) // should equal group_count for compactstorage
@@ -76,9 +81,10 @@ void dequantize_block_tile_compact(uint16_t row_start, uint16_t rows,
         // printf("[DEBUG][DQ] compact tile dequant: rows [%u..%u), groups=%u, tile_P=%u\n\t", row_start, row_end,
         //        group_count, tile_P);
 
-        flex_timer_start();
+        flex_timer_start(); // puttingtimer here doesntchange theruntime
+
+        asm volatile("vsetvli zero, %0, e16, m1, ta, ma" ::"r"(8u));
         for (uint16_t r = row_start; r < row_end; ++r) {
-            const uint16_t s = scales[r];
 
             // Indices for row r in the compact tile
             const uint8_t* p_idx = (const uint8_t*)idx + 2u * r * idx_groups_stride;
@@ -86,6 +92,10 @@ void dequantize_block_tile_compact(uint16_t row_start, uint16_t rows,
             // Output row r in the COMPACT W_dq tile
             uint16_t* p_out = W_tile + r * tile_P;
 
+            const uint16_t* scp = &scales[r];
+            // const uint16_t s = scales[r];
+
+            const uint16_t scale_val = scales[r];
             for (uint16_t g = 0; g < group_count; ++g) {
                 const uint8_t idx0 = p_idx[0];
                 const uint8_t idx1 = p_idx[1];
@@ -93,8 +103,10 @@ void dequantize_block_tile_compact(uint16_t row_start, uint16_t rows,
 
                 const uint16_t* a = cb0 + (unsigned)idx0 * VQ_GROUP_SIZE;
                 const uint16_t* b = cb1 + (unsigned)idx1 * VQ_GROUP_SIZE;
+                dequant_group(a, b, scp, p_out);
 
-                dequant_group(a, b, &s, p_out);
+                // dequant_group_s_by_val(a, b, s, p_out);
+
                 p_out += VQ_GROUP_SIZE;
             }
         }

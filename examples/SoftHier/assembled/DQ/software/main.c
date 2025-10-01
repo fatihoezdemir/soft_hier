@@ -356,7 +356,7 @@ void dq_gemm_double_buffer() {                // TODO currently only load is ove
 
         // Verify matrix multiplication results against golden reference
         debug("[DEBUG] Verifying GEMM results against golden reference...\n");
-        spatz_verify_16(FP16_M * FP16_N, hbm_result_ptr, (uint16_t*)matrix_golden_fp16, 0.5F);
+        spatz_verify_16(FP16_M * FP16_N, hbm_result_ptr, (uint16_t*)matrix_golden_fp16, 0.25F);
         debug("[VERIFICATION] Verification complete!\n");
     }
 }

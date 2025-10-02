@@ -1,4 +1,7 @@
+#ifndef DQ_LOAD_DATA_L1_HH
+#define DQ_LOAD_DATA_L1_HH
 #include "dq_data_hbm.h"
+#include "dq_helpers.h"
 #include "flex_alloc.h"
 #include "flex_dma_pattern.h"
 
@@ -83,3 +86,5 @@ void dq_load_activation_tile(void* dest, const void* src, uint32_t row_tile_inde
     flex_dma_async_wait_all();
     flex_timer_end();
 }
+
+#endif

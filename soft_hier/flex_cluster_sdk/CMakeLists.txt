@@ -44,4 +44,24 @@ add_custom_command(
 
 add_custom_target(dump ALL DEPENDS softhier.dump)
 
+# Build second binary within the same folder called TEST
+if(DEFINED TEST_SOURCES)
+    add_custom_command(
+        OUTPUT softhier_test.elf
+        COMMAND ${COMPILER} -I ${CMAKE_SOURCE_DIR}/runtime/include -I ${INCLUDE_DIRS} -T ${LINKER_SCRIPT} -nostartfiles -mabi=ilp32d -mcmodel=medlow -march=${RISCV_ARCH} -g -O3 -ffast-math -fno-builtin -fno-tree-vectorize -fno-common -ffunction-sections -Wl,--gc-sections -o softhier_test.elf ${CMAKE_SOURCE_DIR}/runtime/flex_start.s ${TEST_SOURCES}
+        COMMENT "Generating softhier_test.elf"
+    )
+
+    add_custom_target(build_test ALL DEPENDS softhier_test.elf)
+
+    add_custom_command(
+        OUTPUT softhier_test.dump
+        DEPENDS softhier_test.elf
+        COMMAND ${OBJDUMPER} -D softhier_test.elf > softhier_test.dump
+        COMMENT "Creating disassembly softhier_test.dump"
+    )
+
+    add_custom_target(dump_test ALL DEPENDS softhier_test.dump)
+endif()
+
 

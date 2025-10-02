@@ -47,18 +47,18 @@ void dequant_group_debug(const uint16_t* a /*cb0[idx0[i]]*/, const uint16_t* b /
 }
 void dequant_group(const uint16_t* a /*cb0[idx0[i]]*/, const uint16_t* b /*cb1[idx1[i]]*/, const uint32_t* scale,
                    uint16_t* out) {
-    asm volatile("vsetvli  zero, %[g], e16, m1, ta, ma\n\t" 
-        
-                // "vlseg2e8.v v0, (%[a])\n\t"
+    asm volatile("vsetvli  zero, %[g], e16, m1, ta, ma\n\t"
 
-                // "vlseg8e8.v vd, (rs1), vm"
+                 // "vlseg2e8.v v0, (%[a])\n\t"
+
+                 // "vlseg8e8.v vd, (rs1), vm"
                  "vmv.v.i  v2, 0\n\t"
-                 "vle16.v  v0, (%[a])\n\t"                
-                 "vle16.v  v1, (%[b])\n\t"                
-                 "flw      fa0, (%[s])\n\t"                // f0 = scale (fp32) scale swere uinsigned
-                 "vfmul.vf v2, v0, fa0\n\t"                // v2 = a * s
-                 "vfmacc.vf v2, fa0, v1\n\t"               // v2 += b * s  => (a+b)*s
-                 "vse16.v  v2, (%[out])\n\t"              // store
+                 "vle16.v  v0, (%[a])\n\t"
+                 "vle16.v  v1, (%[b])\n\t"
+                 "flw      fa0, (%[s])\n\t"  // f0 = scale (fp32) scale swere uinsigned
+                 "vfadd.vv v2, v0, v1\n\t"   // v2 = a * s
+                 "vfmul.vf v3, v2, fa0\n\t"  // v2 += b * s  => (a+b)*s
+                 "vse16.v  v3, (%[out])\n\t" // store
                  :
                  : [a] "r"(a), [b] "r"(b), [s] "r"(scale), [out] "r"(out), [g] "r"(8u)
                  : "v0", "v1", "v2", "fa0");
@@ -68,21 +68,21 @@ void dequant_group_legacy(const uint16_t* a /*cb0[idx0[i]]*/, const uint16_t* b 
     uint32_t vl;
     uint32_t gsize = 8;
     // FINALUse vector-vector multiply with scale broadcasting via vmv.v.x
-    asm volatile("vsetvli zero, %[gsize], e16, m1, ta, ma\n\t" 
-                // "vlseg2e8.v v5, (%[a])\n\t" illegal instruciotn
-                 "vle16.v  v0, (%[a])\n\t"                     // cb0[idx0]
-                 "vle16.v  v1, (%[b])\n\t"                     // cb1[idx1]
-                 "lhu t0, (%[sp])\n\t"                         // load scale as integer scale swere uinsigned
-                 "vmv.v.x v2, t0\n\t"                          // broadcast scale to vector
-                 "vfadd.vv v3, v0, v1\n\t"                     // sum
-                 "vfmul.vv v4, v3, v2\n\t"                     // vector-vector multiply
-                 "vse16.v  v4, (%[out])\n\t"                   // store
+    asm volatile("vsetvli zero, %[gsize], e16, m1, ta, ma\n\t"
+                 // "vlseg2e8.v v5, (%[a])\n\t" illegal instruciotn
+                 "vle16.v  v0, (%[a])\n\t"   // cb0[idx0]
+                 "vle16.v  v1, (%[b])\n\t"   // cb1[idx1]
+                 "lhu t0, (%[sp])\n\t"       // load scale as integer scale swere uinsigned
+                 "vmv.v.x v2, t0\n\t"        // broadcast scale to vector
+                 "vfadd.vv v3, v0, v1\n\t"   // sum
+                 "vfmul.vv v4, v3, v2\n\t"   // vector-vector multiply
+                 "vse16.v  v4, (%[out])\n\t" // store
                  :
                  : [a] "r"(a), [b] "r"(b), [out] "r"(out), [sp] "r"(scale), [gsize] "r"(8u)
                  : "t0", "v0", "v1", "v2", "v3", "v4");
 }
 
-//TODO load scale once per row
+// TODO load scale once per row
 void dequantize_block_tile_compact(uint16_t row_start, uint16_t rows,
                                    uint16_t group_count,       // groups in this tile
                                    uint16_t idx_groups_stride) // should equal group_count for compactstorage
@@ -111,7 +111,7 @@ void dequantize_block_tile_compact(uint16_t row_start, uint16_t rows,
             // Output row r in the COMPACT W_dq tile
             uint16_t* p_out = W_tile + r * tile_P;
 
-            const uint32_t* scp = (const uint32_t*) &scales[r];
+            const uint32_t* scp = (const uint32_t*)&scales[r];
             // const uint16_t s = scales[r];
             asm volatile("lhu t0, (%0)" ::"r"(scp) : "t0", "memory"); // Load scale and broadcast to vector
 

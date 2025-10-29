@@ -103,5 +103,14 @@ void dq_load_activation_tile(void* dest, const void* src, uint32_t row_tile_inde
     flex_dma_async_wait_all();
     flex_timer_end();
 }
+// void dq_store_C_tile(void* dst,void* src){
+
+//     flex_dma_async_2d((uint64_t)(uintptr_t)dst, (uint64_t)(uintptr_t)src/*l1_buffers.C_tile*/, P * sizeof(uint16_t),
+//     FP16_K * sizeof(uint16_t), // Full C matrix width
+//     P * sizeof(uint16_t),      //  tile width
+//     /*rows*/ r);
+// flex_dma_async_wait_all();
+
+// }
 
 #endif

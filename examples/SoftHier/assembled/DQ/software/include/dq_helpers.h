@@ -17,6 +17,7 @@ typedef struct {
     volatile uint16_t* indices;    // indices in L1
     volatile uint8_t* indices0_u8; // indices in L1
     volatile uint8_t* indices1_u8; // indices in L1
+    volatile uint16_t* W_dq_buf[2]; // optional double buffer for dequantized weights
 
     volatile uint16_t* W_dq; // dequantized weights tile in L1
 } L1_DQ_Handles;
@@ -133,8 +134,8 @@ void dequantize_block_tile_compact(uint16_t row_start, uint16_t rows,
                 const uint16_t* a = cb0 + (unsigned)idx0 * VQ_GROUP_SIZE;
                 const uint16_t* b = cb1 + (unsigned)idx1 * VQ_GROUP_SIZE;
                 // dequant_group_legacy(a, b, scale_ptr, p_out);
-                // dequant_group(a, b, scale_ptr, p_out);
-                dequant_groupmacc(a, b, scale_ptr, p_out);
+                dequant_group(a, b, scale_ptr, p_out);
+                // dequant_groupmacc(a, b, scale_ptr, p_out);
                 p_out += VQ_GROUP_SIZE;
             }
         }

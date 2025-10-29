@@ -92,6 +92,10 @@ void dq_gemm_double_buffer_baseline() {       // TODO currently only load is ove
     // PDEBUG("\n=== STARTING DOUBLE-BUFFERED PIPELINE (NUM_TILES=%u) ===\n", NUM_TILES);
     int curB = 0;
 
+    // Variables to save for epilogue store
+    uint32_t last_r = 0, last_P = 0;
+    uint64_t last_dst = 0;
+
     for (uint32_t bt = 0; bt < NUM_TILES; ++bt) {
         const uint32_t g = get_groups_for_tile(bt); // groups in this B tile
         const uint32_t P = g * VQ_GROUP_SIZE;       // columns in compact W/C
@@ -120,7 +124,6 @@ void dq_gemm_double_buffer_baseline() {       // TODO currently only load is ove
             const bool has_next_bt    = (bt + 1u < NUM_TILES);
 
 
-            
             // Calculate destination address in allocated HBM buffer
             const uint32_t col_start_elems = get_start_group_for_tile(bt) * VQ_GROUP_SIZE;
             const uint32_t row_start_elems = sr * FP16_K;
@@ -148,7 +151,7 @@ void dq_gemm_double_buffer_baseline() {       // TODO currently only load is ove
             // While processing first A tile, prefetch next B indices
             if (at == 0 && has_next_bt && flex_is_dm_core() && CID == 0) {
                 int nxtB = curB ^ 1; // Toggle buffer
-                debug("\t\t[DMA] Prefetching B%u indices to idx_buf[%d]=0x%08x\n\t\t", bt + 1, nxtB,
+                debug("\t\t[DMA][LD] Prefetching B%u indices to idx_buf[%d]=0x%08x\n\t\t", bt + 1, nxtB,
                       l1_buffers.idx0_buf_packed[nxtB]);
                 dq_load_indices_tile((void*)l1_buffers.idx0_buf_packed[nxtB], &matrix_idx_packed_uint16[0], bt + 1);
                 uint32_t C_buf_size  = max_r * max_P * sizeof(uint16_t);
@@ -163,10 +166,10 @@ void dq_gemm_double_buffer_baseline() {       // TODO currently only load is ove
 
                 // debug("    [REDMULE] Computing A[%u×%u] × B[%u×%u] -> C[%u×%u]\n",
                 //     r, FP16_N, FP16_N, P, r, P);
-                uint32_t C_buf_size  = max_r * max_P * sizeof(uint16_t);
+                uint32_t C_buf_elems = max_r * max_P;
                 uint16_t* c_ptr      = (uint16_t*)(uintptr_t)l1_buffers.C_tile;
 
-                for (int i = 0; i < C_buf_size; ++i) { // TODO temporary solution,fix later
+                for (int i = 0; i < C_buf_elems; ++i) { // TODO temporary solution,fix later
                     c_ptr[i] = 0;
                     //         // debug("0x%04x ", c_ptr[i]);
                 }
@@ -198,7 +201,9 @@ void dq_gemm_double_buffer_baseline() {       // TODO currently only load is ove
             }
 
             // DMA: Store compact C_tile (r×P) back to HBM with proper striding
-            if (flex_is_dm_core() && CID == 0) {
+            // Store all tiles except the very last A×B combination (handled in epilogue)
+            const bool is_very_last_tile = is_last_a_tile && !has_next_bt;
+            if (flex_is_dm_core() && CID == 0 && !is_very_last_tile) {
                 debug("\t\t[DEBUG][DMA] Storing A%u x B%u to dst=0x%08x (r=%u, P=%u)\n\t\t", at, bt, (uint32_t)dst, r,
                       P);
                 flex_timer_start();
@@ -210,6 +215,13 @@ void dq_gemm_double_buffer_baseline() {       // TODO currently only load is ove
                 flex_timer_end();
             }
 
+            // Save parameters for final C_tile store (last A×B tile cobmination)
+            if (is_very_last_tile && flex_is_dm_core() && CID == 0) {
+                last_r = r;
+                last_P = P;
+                last_dst = dst;
+            }
+
             flex_intra_cluster_sync();
             // Swap A_buf for next iteration
             curA ^= 1;
@@ -217,6 +229,28 @@ void dq_gemm_double_buffer_baseline() {       // TODO currently only load is ove
         // Swap idx_buf B for next outer iteration
         curB ^= 1;
     }
+
+    flex_intra_cluster_sync();
+
+    // PIPELINE EPILOGUE - Store the very last C_tile (A[NUM_TILES-1] × B[NUM_TILES-1])
+    if (flex_is_dm_core() && CID == 0) {
+        debug("\t\t[DEBUG][DMA][EPILOGUE] Storing final A%u x B%u to dst=0x%08x (r=%u, P=%u)\n\t\t",
+              NUM_TILES-1, NUM_TILES-1, (uint32_t)last_dst, last_r, last_P);
+        debug("\t\t[DEBUG] C_tile addr=0x%08x, first few values: 0x%04x 0x%04x 0x%04x 0x%04x\n\t\t",
+              (uint32_t)l1_buffers.C_tile,
+              ((uint16_t*)l1_buffers.C_tile)[0],
+              ((uint16_t*)l1_buffers.C_tile)[1],
+              ((uint16_t*)l1_buffers.C_tile)[2],
+              ((uint16_t*)l1_buffers.C_tile)[3]);
+        flex_timer_start();
+        flex_dma_async_2d(last_dst, (uint64_t)(uintptr_t)l1_buffers.C_tile, last_P * sizeof(uint16_t),
+                          FP16_K * sizeof(uint16_t), // Full C matrix width
+                          last_P * sizeof(uint16_t), //  tile width
+                          /*rows*/ last_r);
+        flex_dma_async_wait_all();
+        flex_timer_end();
+    }
+
 
     // Verify computation results against golden reference
     if (flex_is_dm_core() && CID == 0) {

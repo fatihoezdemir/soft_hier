@@ -71,6 +71,23 @@ void dq_load_indices_tile(void* dest, const void* src, uint32_t tile_index) {
     flex_timer_end();
 }
 
+void dq_load_indices_tile_u8(void* dest, const void* src, uint32_t tile_index) {
+    // Calculate groups for this tile
+    uint32_t groups_this_tile = get_groups_for_tile(tile_index);
+    // Calculate starting group position
+    uint32_t start_group = get_start_group_for_tile(tile_index);
+
+
+    flex_dma_async_2d((uint64_t)(uintptr_t)dest,                                // compact dest buffer, no offset
+                      (uint64_t)(uintptr_t)src + start_group * sizeof(uint8_t), // source with offset
+                      groups_this_tile * sizeof(uint8_t),                       // transfer size per row
+                      groups_this_tile * sizeof(uint8_t),                       // dest stride = tile width (compact)
+                      VQ_NUM_GROUPS_PER_ROW * sizeof(uint8_t),                  // source stride (full row)
+                      FP16_M                                                    // all rows
+    );
+    flex_dma_async_wait_all();
+
+}
 // Load a horizontal stripe of the activation matrix (split by rows only)
 // Since rows are contiguous in memory, we can use 1D DMA
 void dq_load_activation_tile(void* dest, const void* src, uint32_t row_tile_index) {

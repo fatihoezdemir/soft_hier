@@ -50,6 +50,10 @@
 #define RVV_V30 30u
 #define RVV_V31 31u
 
+/* Integer regs x0..x31 (needed for custom load helpers) */
+#define RVX_T0 5u
+#define RVX_T1 6u
+
 /* frs1 (3 bits) — ft0..ft7 only */
 #define RVF_RS1_FT0 0u
 #define RVF_RS1_FT1 1u
@@ -70,6 +74,11 @@
 #define VFWXMACC_VF(vd, vs2, vs1, frs1_3b, vm) ENCODE_OPVFX(FUNCT6_VFWXMACC, (vm), (vs2), (vs1), (frs1_3b), (vd))
 
 #define VFWXMUL_VF(vd, vs2, vs1, frs1_3b, vm) ENCODE_OPVFX(FUNCT6_VFWXMUL, (vm), (vs2), (vs1), (frs1_3b), (vd))
+
+/* Custom block gather (vlxblk1ei8.v) */
+#define VLBLK1EI8_V(vd, vs2, rs1, vm)                                                                                  \
+    (((uint32_t)0x3Fu << 26) | ((uint32_t)((vm) & 0x01u) << 25) | ((uint32_t)((vs2) & 0x1Fu) << 20) |                  \
+     ((uint32_t)((rs1) & 0x1Fu) << 15) | ((uint32_t)0x7u << 12) | ((uint32_t)((vd) & 0x1Fu) << 7) | (uint32_t)0x4Du)
 
 /* ---------- Emission helpers ---------- */
 /* Use when all args are compile-time constants: puts the word directly. */

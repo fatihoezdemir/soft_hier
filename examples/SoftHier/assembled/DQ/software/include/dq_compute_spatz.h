@@ -1,3 +1,6 @@
+#ifndef DQ_COMPUTE_SPATZ_HH
+#define DQ_COMPUTE_SPATZ_HH
+
 #include "spatz_rvv_extensions.h"
 
 #include <inttypes.h>
@@ -119,3 +122,5 @@ static inline void spatz_matmul_fp16_8wide(uint16_t* matrix_a, uint16_t* matrix_
         avl = P - p;
     } while (p < P);
 }
+
+#endif

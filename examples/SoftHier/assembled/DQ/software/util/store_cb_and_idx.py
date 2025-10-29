@@ -82,14 +82,16 @@ def main():
     print(codebooks[1].reshape(-1))
 
     codebook_flattened = np.concatenate((codebooks[0].reshape(-1),codebooks[1].reshape(-1))) if codebooks.shape[0]>=1 else ConnectionError
-    indices_flattened =  (indices[:,:,1].astype(np.uint16) << 8) | indices[:,:,0].astype(np.uint16)
-
+    indices_packed =  (indices[:,:,1].astype(np.uint16) << 8) | indices[:,:,0].astype(np.uint16)
+    indices_flattened = np.concatenate ( (indices[:,:,0].astype(np.uint8),indices[:,:,1].astype(np.uint8)   )   )# axis 0
     print("codebook flattened ",codebook_flattened.shape)
 
+    print("packing indices to  ",indices_packed.shape)
     print("flattening indices to  ",indices_flattened.shape)
+
     print("Result is 1 packed uint16 index  that contains both uint8 indices : idx_codebook1|idx_codebook0  ",)
 
-    # print("indices_flattened  ",indices_flattened)
+    # print("indices_packed  ",indices_packed)
 
 
 
@@ -149,6 +151,10 @@ def main():
 
             write_matrix_to_header(f, 'matrix_cb_fp16', codebook_flattened, fmt='fp16', dtype='uint16_t')#args.input_format)
             write_indices_u16(     f, 'matrix_idx_packed_uint16', indices)
+            # write_matrix_to_header(f, 'matrix_idx_uint8', indices_flattened, fmt='uint8', dtype='uint8_t')#args.input_format)
+            write_matrix_to_header(f, 'matrix_idx0_uint8', indices[:,:,0].astype(np.uint8), fmt='uint8', dtype='uint8_t')#args.input_format)
+            write_matrix_to_header(f, 'matrix_idx1_uint8', indices[:,:,1].astype(np.uint8), fmt='uint8', dtype='uint8_t')#args.input_format)
+
             write_matrix_to_header(f, 'matrix_scales_fp16', scales, fmt='fp16', dtype='uint16_t')#args.input_format)
 
             write_matrix_to_header(f, 'matrix_activation_fp16', Act, fmt='fp16', dtype='uint16_t')#args.input_format)

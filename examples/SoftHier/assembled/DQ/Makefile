@@ -17,6 +17,16 @@ dqswv:
 dqswm:
 	make pld_gemm;
 	DEBUG=1 cfg=$(abspath config/arch_dq_sc.py) app=$(abspath software) make -C ../../../../ sw run
+
+# Test targets
+test:
+	DEBUG=1 cfg=$(abspath config/arch_dq_sc.py) app=$(abspath software) make -C ../../../../ hs
+	./../../../../install/bin/gvsoc --target=pulp.chips.flex_cluster.flex_cluster --binary ../../../../sw_build/softhier_test.elf run
+
+testsw:
+	DEBUG=1 cfg=$(abspath config/arch_dq_sc.py) app=$(abspath software) make -C ../../../../ sw
+	./../../../../install/bin/gvsoc --target=pulp.chips.flex_cluster.flex_cluster --binary ../../../../sw_build/softhier_test.elf run
+
 # Clang-tidy targets
 tidy:
 	clang-tidy-18 software/*.c -- \

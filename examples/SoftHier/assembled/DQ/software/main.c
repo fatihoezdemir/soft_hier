@@ -1,4 +1,5 @@
-/*********
+
+/* ********
  * Benchmarking GEMV and GEMM kernels
  * TODO deprecated,change
  * Each benchmark in sequential steps (but the processes eg dma and compute or dma and dequantize happen at same time)
@@ -26,16 +27,12 @@ Weight Matrix B = [B0 B1 B2 ...] vertical splits
 #define DEBUG 1
 #define REDMULE_ON 1
 
-#include "flex_alloc.h"
+#include "flex_cluster_arch.h"
 #include "flex_dma_pattern.h"
 #include "flex_dump.h"
-#include "flex_libfp16.h"
-#include "flex_libfp8.h"
 #include "flex_printf.h"
-#include "flex_redmule.h"
 #include "flex_runtime.h"
 #include "include/debug.h"
-#include "include/dq_compute_spatz.h" // spatz computation kernels
 #include "include/dq_gemm_double_buffer_baseline.h"
 #include "include/dq_gemv_double_buffer_baseline.h"
 #include "include/dq_helpers.h"
@@ -45,7 +42,7 @@ Weight Matrix B = [B0 B1 B2 ...] vertical splits
 const int SPATZ_CORE   = 0;
 const int DOUBLEBUFFER = 1;
 // Tiling configuration TODO make a tilinginfo struct
-const int NUM_TILES = 2;
+const int NUM_TILES = 1;
 
 int main() {
 
@@ -65,7 +62,8 @@ int main() {
 
     if (total_l1_required > ARCH_CLUSTER_TCDM_SIZE) {
         if (flex_get_core_id() == 0 && flex_get_cluster_id() == 0) {
-            printf("ERROR: L1 overflow! Need %uKB, have %uKB\n", total_l1_required >> 10, ARCH_CLUSTER_TCDM_SIZE >> 10);
+            printf("ERROR: L1 overflow, tiles too big! Need %uKB, have %uKB\n", total_l1_required >> 10,
+                   ARCH_CLUSTER_TCDM_SIZE >> 10);
         }
         flex_eoc(eoc_val);
     }
@@ -77,9 +75,13 @@ int main() {
 #if GEMM == 1
     // [INFO] Running double-buffered GEMM with pipelined execution
     dq_gemm_double_buffer_baseline();
+    // dq_gemm_double_buffer_baseline_extended();
+
 #elif GEMV == 1
     //[INFO] Running double-buffered GEMV
-    dq_gemv_double_buffer_baseline();
+    // dq_gemv_double_buffer_baseline();
+    // dq_gemv_double_buffer_extended();
+    // dq_gemv_double_buffer_fused();
 
 #endif
     /**************************************/

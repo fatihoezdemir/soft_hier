@@ -25,7 +25,9 @@ Weight Matrix B = [B0 B1 B2 ...] vertical splits
 
 #include <stdint.h>
 #define DEBUG 1
+#define TIMER 1
 #define REDMULE_ON 1
+#define VERIFY_VALUES 0
 const int SPATZ_CORE   = 1;
 const int REDMULE_ATTACHED_CORE   = 0;//by default, redmule is always attached to core 0
 #include "flex_cluster_arch.h"
@@ -76,7 +78,7 @@ int main() {
 #if GEMM == 1
     // [INFO] Running double-buffered GEMM with pipelined execution
 
-    dq_gemm_double_buffer_baselineu8();
+    dq_gemm_double_buffer_baseline();
     // dq_gemm_double_buffer_baseline_extended();
 
 #elif GEMV == 1

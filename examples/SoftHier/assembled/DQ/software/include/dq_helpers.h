@@ -115,7 +115,7 @@ void dequantize_block_tile_compact(uint16_t row_start, uint16_t rows,
         // printf("[DEBUG][DQ] compact tile dequant: rows [%u..%u), groups=%u, tile_P=%u\n\t", row_start, row_end,
         //        group_count, tile_P);
 
-        flex_timer_start(); // puttingtimer here doesntchange theruntime
+        // flex_timer_start(); // puttingtimer here doesntchange theruntime
 
         asm volatile("vsetvli zero, %0, e16, m1, ta, ma" ::"r"((uint32_t)VQ_GROUP_SIZE));
         for (uint16_t r = row_start; r < row_end; ++r) {
@@ -140,7 +140,7 @@ void dequantize_block_tile_compact(uint16_t row_start, uint16_t rows,
                 p_out += VQ_GROUP_SIZE;
             }
         }
-        flex_timer_end();
+        // flex_timer_end();
     }
 }
 

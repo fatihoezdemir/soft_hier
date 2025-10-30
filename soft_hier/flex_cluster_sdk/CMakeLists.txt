@@ -61,7 +61,7 @@ if(DEFINED TEST_SOURCES)
         COMMENT "Creating disassembly softhier_test.dump"
     )
 
-    add_custom_target(dump_test ALL DEPENDS softhier_test.dump)
+    # add_custom_target(dump_test ALL DEPENDS softhier_test.dump)
 endif()
 
 

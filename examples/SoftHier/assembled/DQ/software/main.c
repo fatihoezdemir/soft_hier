@@ -24,7 +24,7 @@ Weight Matrix B = [B0 B1 B2 ...] vertical splits
 #include "include/dq_data_hbm.h"
 
 #include <stdint.h>
-#define DEBUG 1
+#define DEBUG 0
 #define TIMER 1
 #define REDMULE_ON 1
 #define VERIFY_VALUES 0

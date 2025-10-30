@@ -219,7 +219,7 @@ void dq_gemm_double_buffer_baseline() {
                 g_l1_dq.W_dq          = l1_buffers.W_dq_buf[targetW];
                 dequantize_block_tile_compact(/*row_start=*/0, /*rows=*/FP16_M,
                                               /*group_count=*/g_next, /*idx_groups_stride=*/g_next);
-                debug("dequant finished\n\t\t");
+
                 readyW ^= 1;
             }
 
@@ -228,7 +228,7 @@ void dq_gemm_double_buffer_baseline() {
 
             // Save current iteration's parameters for next iteration's store
             if (flex_is_dm_core() && CID == 0) {
-                debug(" \n\tfinished B%d A%d iteration of a \n", bt,at);
+                // debug(" \n\tfinished B%d A%d iteration of a \n", bt,at);
                 prev_r   = r;
                 prev_P   = P;
                 prev_dst = dst;

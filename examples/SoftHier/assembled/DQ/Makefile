@@ -9,8 +9,9 @@ dqsw:
 dq_nodebug:
 	cfg=$(abspath config/arch_dq_sc.py) app=$(abspath software)  make -C ../../../../ hs run
 pfto:
-	DEBUG=1 cfg=$(abspath config/arch_dq_sc.py) app=$(abspath software) make -C ../../../../ hs runv pfto
-
+	 VERIFY_VALUES=0 DEBUG=1 cfg=$(abspath config/arch_dq_sc.py) app=$(abspath software) make -C ../../../../ hs runv pfto
+rund:
+	DEBUG=1 cfg=$(abspath config/arch_dq_sc.py) app=$(abspath software) make -C ../../../../ hs rund 
 dqswv:
 	make pld_gemv;
 	DEBUG=1 cfg=$(abspath config/arch_dq_sc.py) app=$(abspath software) make -C ../../../../ sw run

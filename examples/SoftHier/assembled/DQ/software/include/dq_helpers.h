@@ -9,16 +9,17 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
-
+extern const int SPATZ_CORE;
 // TODO not valid for multicluster scenario, maybe create array of clusters?
 typedef struct {
     volatile uint16_t* cb;         // codebook base in L1
     volatile uint16_t* scales;     // scales in L1
     volatile uint16_t* indices;    // indices in L1
     volatile uint8_t* indices0_u8; // indices in L1
+    volatile uint8_t* indices_u8; // indices in L1
+
     volatile uint8_t* indices1_u8; // indices in L1
     volatile uint16_t* W_dq_buf[2]; // optional double buffer for dequantized weights
-
     volatile uint16_t* W_dq; // dequantized weights tile in L1
 } L1_DQ_Handles;
 extern L1_DQ_Handles g_l1_dq;
@@ -101,7 +102,7 @@ void dequantize_block_tile_compact(uint16_t row_start, uint16_t rows,
                                    uint16_t group_count,       // groups in this tile
                                    uint16_t idx_groups_stride) // should equal group_count for compactstorage
 {
-    if (flex_get_core_id() == 0 && flex_get_cluster_id() == 0) {
+    if (flex_get_core_id() == SPATZ_CORE && flex_get_cluster_id() == 0) {
         uint16_t* W_tile       = (uint16_t*)(uintptr_t)g_l1_dq.W_dq;          // COMPACT tile buffer
         const uint16_t* idx    = (const uint16_t*)(uintptr_t)g_l1_dq.indices; // COMPACT indices
         const uint16_t* scales = (const uint16_t*)(uintptr_t)g_l1_dq.scales;

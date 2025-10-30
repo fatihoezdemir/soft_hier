@@ -76,7 +76,7 @@ int main() {
     // Choose which version to run based on Kernel macro
 #if GEMM == 1
     // [INFO] Running double-buffered GEMM with pipelined execution
-    dq_gemm_double_buffer_baseline();
+    // dq_gemm_double_buffer_baseline();
 #elif GEMV == 1
     //[INFO] Running double-buffered GEMV
     dq_gemv_double_buffer_baseline();

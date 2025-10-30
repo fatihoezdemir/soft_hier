@@ -26,7 +26,8 @@ Weight Matrix B = [B0 B1 B2 ...] vertical splits
 #include <stdint.h>
 #define DEBUG 1
 #define REDMULE_ON 1
-
+const int SPATZ_CORE   = 1;
+const int REDMULE_ATTACHED_CORE   = 0;//by default, redmule is always attached to core 0
 #include "flex_cluster_arch.h"
 #include "flex_dma_pattern.h"
 #include "flex_dump.h"
@@ -39,10 +40,10 @@ Weight Matrix B = [B0 B1 B2 ...] vertical splits
 #include "include/dq_load_data_l1.h"
 
 #include <stdio.h>
-const int SPATZ_CORE   = 0;
+
 const int DOUBLEBUFFER = 1;
 // Tiling configuration TODO make a tilinginfo struct
-const int NUM_TILES = 1;
+const int NUM_TILES = 4;
 
 int main() {
 
@@ -74,7 +75,8 @@ int main() {
     // Choose which version to run based on Kernel macro
 #if GEMM == 1
     // [INFO] Running double-buffered GEMM with pipelined execution
-    dq_gemm_double_buffer_baseline();
+
+    dq_gemm_double_buffer_baselineu8();
     // dq_gemm_double_buffer_baseline_extended();
 
 #elif GEMV == 1

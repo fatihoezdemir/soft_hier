@@ -60,5 +60,9 @@ examples/SoftHier/assembled/DQ/software/include/dq_matmul_fp16.h
 examples/SoftHier/assembled/DQ/software/util/analyze_weight_distribution.py
 examples/SoftHier/assembled/DQ/software/util/tempCodeRunnerFile.py
 core
+examples/SoftHier/assembled/DQ/plots/*
 pulp
 .vscode/tasks.json
+pulp
+core
+examples/SoftHier/assembled/DQ/*.png

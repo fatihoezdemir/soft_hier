@@ -24,10 +24,10 @@ Weight Matrix B = [B0 B1 B2 ...] vertical splits
 #include "include/dq_data_hbm.h"
 
 #include <stdint.h>
-#define DEBUG 0
-#define TIMER 1
+#define DEBUG 1
+#define TIMER 0
 #define REDMULE_ON 1
-#define VERIFY_VALUES 0
+#define VERIFY_VALUES 1
 const int SPATZ_CORE   = 1;
 const int REDMULE_ATTACHED_CORE   = 0;//by default, redmule is always attached to core 0
 #include "flex_cluster_arch.h"
@@ -43,9 +43,9 @@ const int REDMULE_ATTACHED_CORE   = 0;//by default, redmule is always attached t
 
 #include <stdio.h>
 
-const int DOUBLEBUFFER = 1;
+
 // Tiling configuration TODO make a tilinginfo struct
-const int NUM_TILES = 4;
+const int NUM_TILES =4;
 
 int main() {
 
@@ -78,9 +78,9 @@ int main() {
 #if GEMM == 1
     // [INFO] Running double-buffered GEMM with pipelined execution
 
-    dq_gemm_double_buffer_baseline();
+    // dq_gemm_triple_buffer_baseline();
+    dq_gemm_triple_buffer_baselineu8();
     // dq_gemm_double_buffer_baseline_extended();
-
 #elif GEMV == 1
     //[INFO] Running double-buffered GEMV
     // dq_gemv_double_buffer_baseline();
@@ -92,9 +92,9 @@ int main() {
     /*  Program Execution Region -- Stop  */
     /**************************************/
     flex_global_barrier_xy();
-    if (flex_get_core_id() == 0 && flex_get_cluster_id() == 0) {
-        printf("\nfinished!");
-    }
+    // if (flex_get_core_id() == 0 && flex_get_cluster_id() == 0) {
+    //     printf("\nfinished!");
+    // }
     flex_global_barrier_xy();
     flex_eoc(eoc_val);
     return 0;

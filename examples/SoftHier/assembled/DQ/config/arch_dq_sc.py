@@ -43,8 +43,8 @@ class FlexClusterArch:
 
         #Spatz Vector Unit
         self.spatz_attaced_core_list = [1]
-        self.spatz_num_vlsu_port     = 4
-        self.spatz_num_function_unit = 8
+        self.spatz_num_vlsu_port     = 8
+        self.spatz_num_function_unit = 4
         self.spatz_vlsu_port_width   = 64
         # By defalut (1), gather within vreg have the same bandwidth as VPU
         # Too pass this value to .inc files, simply x100 (i.e. 1.5 --> 150)

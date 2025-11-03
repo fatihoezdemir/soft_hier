@@ -154,6 +154,7 @@ def main():
             # write_matrix_to_header(f, 'matrix_idx_uint8', indices_flattened, fmt='uint8', dtype='uint8_t')#args.input_format)
             write_matrix_to_header(f, 'matrix_idx0_uint8', indices[:,:,0].astype(np.uint8), fmt='uint8', dtype='uint8_t')#args.input_format)
             write_matrix_to_header(f, 'matrix_idx1_uint8', indices[:,:,1].astype(np.uint8), fmt='uint8', dtype='uint8_t')#args.input_format)
+            write_matrix_to_header(f, 'matrix_idx_uint8', indices_flattened, fmt='uint8', dtype='uint8_t')#args.input_format)
 
             write_matrix_to_header(f, 'matrix_scales_fp16', scales, fmt='fp16', dtype='uint16_t')#args.input_format)
 

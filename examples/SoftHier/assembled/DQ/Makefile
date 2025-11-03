@@ -11,7 +11,9 @@ dq_nodebug:
 pfto:
 	 VERIFY_VALUES=0 DEBUG=1 cfg=$(abspath config/arch_dq_sc.py) app=$(abspath software) make -C ../../../../ hs runv pfto
 rund:
-	DEBUG=1 cfg=$(abspath config/arch_dq_sc.py) app=$(abspath software) make -C ../../../../ hs rund 
+	DEBUG=0 cfg=$(abspath config/arch_dq_sc.py) app=$(abspath software) make -C ../../../../ hs rund 
+runv:
+	DEBUG=0 cfg=$(abspath config/arch_dq_sc.py) app=$(abspath software) make -C ../../../../ hs runv 
 dqswv:
 	make pld_gemv;
 	DEBUG=1 cfg=$(abspath config/arch_dq_sc.py) app=$(abspath software) make -C ../../../../ sw run

@@ -127,13 +127,7 @@ void dq_gemv_double_buffer_baseline() {
                                         1, FP16_M, P);
             flex_timer_end();
             debug("\t[SPATZ] Computing  8 elements\n\t");
-            flex_timer_start();
 
-            // spatz_matmul_fp16_8wide((uint16_t*)l1_buffers.x_vec, // x vector [1 x M]
-            //                         (uint16_t*)g_l1_dq.W_dq,     // W_tile [M x P]
-            //                         (uint16_t*)l1_buffers.y_vec, // y_tile [1 x P]
-            //                         1, FP16_M, P);
-            flex_timer_end();
         }
 
         // crct: Wait for compute to finish before DMA can read C_tile
@@ -195,10 +189,10 @@ void dq_gemv_double_buffer_extended() {
         uint32_t y_tile_size  = max_P * sizeof(uint16_t);
 
         // Allocate  buffers for indices
-        l1_buffers.idx0_buf[0] = (uint8_t*)(uintptr_t)flex_l1_malloc(idx_buf_size);
-        l1_buffers.idx0_buf[1] = (uint8_t*)(uintptr_t)flex_l1_malloc(idx_buf_size);
-        l1_buffers.idx1_buf[0] = (uint8_t*)(uintptr_t)flex_l1_malloc(idx_buf_size);
-        l1_buffers.idx1_buf[1] = (uint8_t*)(uintptr_t)flex_l1_malloc(idx_buf_size);
+        for (int i=0;i<2;++i){
+        l1_buffers.idx0_buf[i] = (uint8_t*)(uintptr_t)flex_l1_malloc(idx_buf_size);
+        l1_buffers.idx1_buf[i] = (uint8_t*)(uintptr_t)flex_l1_malloc(idx_buf_size);
+        }
         l1_buffers.x_vec       = (uint16_t*)(uintptr_t)flex_l1_malloc(x_size);
         g_l1_dq.W_dq           = (uint16_t*)(uintptr_t)flex_l1_malloc(W_buf_size);
         l1_buffers.y_vec       = (uint16_t*)(uintptr_t)flex_l1_malloc(y_tile_size);

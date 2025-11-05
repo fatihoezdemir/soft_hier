@@ -27,7 +27,7 @@ Weight Matrix B = [B0 B1 B2 ...] vertical splits
 #define DEBUG 1
 #define TIMER 0
 #define REDMULE_ON 1
-#define VERIFY_VALUES 1
+#define VERIFY_VALUES 0
 const int SPATZ_CORE   = 1;
 const int REDMULE_ATTACHED_CORE   = 0;//by default, redmule is always attached to core 0
 #include "flex_cluster_arch.h"
@@ -45,7 +45,7 @@ const int REDMULE_ATTACHED_CORE   = 0;//by default, redmule is always attached t
 
 
 // Tiling configuration TODO make a tilinginfo struct
-const int NUM_TILES =4;
+const int NUM_TILES =1;
 
 int main() {
 
@@ -80,11 +80,11 @@ int main() {
 
     // dq_gemm_triple_buffer_baseline();
     dq_gemm_triple_buffer_baselineu8();
-    // dq_gemm_double_buffer_baseline_extended();
+
 #elif GEMV == 1
     //[INFO] Running double-buffered GEMV
     // dq_gemv_double_buffer_baseline();
-    // dq_gemv_double_buffer_extended();
+    dq_gemv_double_buffer_extended();
     // dq_gemv_double_buffer_fused();
 
 #endif

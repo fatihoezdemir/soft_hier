@@ -347,9 +347,9 @@ void dq_gemm_triple_buffer_baselineu8() {
         g_l1_dq.indices0_u8 = l1_buffers.idx0_buf[0];
         g_l1_dq.indices1_u8 = l1_buffers.idx1_buf[0];
         g_l1_dq.W_dq        = l1_buffers.W_dq_buf[readyW];
-        dequantize_block_tile_compactu8(/*row_start=*/0, /*rows=*/FP16_M, /*group_count=*/g0,
-                                      /*idx_groups_stride=*/g0);
-        // dequantize_block_tile_compact_improved(0, FP16_M, g0, g0);
+        // dequantize_block_tile_compactu8(/*row_start=*/0, /*rows=*/FP16_M, /*group_count=*/g0,
+        //                               /*idx_groups_stride=*/g0);
+        dequantize_block_tile_compact_improved(0, FP16_M, g0, g0);
     }
     if (flex_is_dm_core() && CID == 0) {
         // Prologue: DMA load A0 -> A_buf[curA] only for first B tile; subsequent tiles are prefetched
@@ -475,9 +475,9 @@ void dq_gemm_triple_buffer_baselineu8() {
                 g_l1_dq.indices0_u8   = l1_buffers.idx0_buf[nxtB];
                 g_l1_dq.indices1_u8   = l1_buffers.idx1_buf[nxtB];
                 g_l1_dq.W_dq          = l1_buffers.W_dq_buf[targetW];
-                dequantize_block_tile_compactu8(/*row_start=*/0, /*rows=*/FP16_M,
-                                              /*group_count=*/g_next, /*idx_groups_stride=*/g_next);
-                // dequantize_block_tile_compact_improved(0, FP16_M, g, g);
+                // dequantize_block_tile_compactu8(/*row_start=*/0, /*rows=*/FP16_M,
+                //                               /*group_count=*/g_next, /*idx_groups_stride=*/g_next);
+                dequantize_block_tile_compact_improved(0, FP16_M, g, g);
                 readyW ^= 1;
             }
 

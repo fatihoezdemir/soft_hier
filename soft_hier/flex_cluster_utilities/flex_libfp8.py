@@ -248,7 +248,7 @@ def extract_nm_sparsity(matrix, N, M):
 def write_matrix_to_header(f, name, mat, fmt='e4m3', dtype='uint8_t'):
     """Write a flattened matrix to C header as uint8_t fp8-encoded values."""
     flat = mat.flatten()
-    f.write(f'__attribute__((section(".hbm"))) static const {dtype} {name}[{len(flat)}] = {{\n')
+    f.write(f'__attribute__((section(".hbm_west"))) static const {dtype} {name}[{len(flat)}] = {{\n')
     for i, val in enumerate(flat):
         if fmt == 'e4m3':
             int_val = float_to_fp8_e4m3(val)
@@ -287,7 +287,7 @@ def write_index_to_header(f, name, mat, fmt='nm2bit', dtype='uint8_t'):
             byte = (b3 << 6) | (b2 << 4) | (b1 << 2) | b0
             packed.append(byte)
 
-        f.write(f'__attribute__((section(".hbm"))) static const uint8_t {name}[{len(packed)}] = {{\n')
+        f.write(f'__attribute__((section(".hbm_west"))) static const uint8_t {name}[{len(packed)}] = {{\n')
         for i, val in enumerate(packed):
             f.write(f'  0x{val:02X},')
             if (i + 1) % 8 == 0:
@@ -352,7 +352,7 @@ def _bits_for_fmt(fmt, flat):
 
     raise ValueError(f"Unsupported format: {fmt}")
 
-def write_index_to_header_multi_format(f, name, mat, fmt='auto', array_c_type='uint8_t', section='.hbm'):
+def write_index_to_header_multi_format(f, name, mat, fmt='auto', array_c_type='uint8_t', section='.hbm_west'):
     """
     Write a flattened index matrix to a C header as packed bytes.
 
@@ -386,7 +386,7 @@ def write_index_to_header_multi_format(f, name, mat, fmt='auto', array_c_type='u
     # Optional alias
     f.write(f'static const {array_c_type} * const {name}_data = {name};\n\n')
 
-def write_indices_u16(f, name, idx_u8, section='.hbm'):  # idx_u8 shape [M, G, 2], uint8
+def write_indices_u16(f, name, idx_u8, section='.hbm_west'):  # idx_u8 shape [M, G, 2], uint8
     packed = ((idx_u8[...,1].astype(np.uint16) << 8) |
             idx_u8[...,0].astype(np.uint16)).reshape(-1)
     f.write(f'__attribute__((section("{section}"))) '

@@ -120,6 +120,8 @@ def main():
     # # Compute output path
     script_dir = os.path.dirname(os.path.realpath(__file__))
     include_dir = os.path.abspath(os.path.join(script_dir, '..', 'include'))
+    # if(kernel_type=='gemm'):
+    include_dir = os.path.abspath(os.path.join(script_dir, '../../software', 'include'))
     os.makedirs(include_dir, exist_ok=True)
     header_path = os.path.join(include_dir, 'dq_data_hbm.h')
 

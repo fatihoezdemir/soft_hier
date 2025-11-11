@@ -46,17 +46,17 @@ void test_spatz_isa(){
         avl = _AVL;
 
         // odd indeices
-        __attribute__((section(".hbm"))) static const uint8_t index[_AVL/4] = 
+        __attribute__((section(".hbm_west"))) static const uint8_t index[_AVL/4] = 
                         {0b11011101, 0b11011101, 0b11011101, 0b11011101};
         // even indices
-        __attribute__((section(".hbm"))) static const uint8_t index_macc[_AVL/4] = 
+        __attribute__((section(".hbm_west"))) static const uint8_t index_macc[_AVL/4] = 
                         {0b10001000, 0b10001000, 0b10001000, 0b10001000};
         // input vector
-        __attribute__((section(".hbm"))) static const uint8_t inp_vec[_AVL] = 
+        __attribute__((section(".hbm_west"))) static const uint8_t inp_vec[_AVL] = 
                         { 0x36,  0x37,  0xB5,  0x3A,  0x39,  0xAD,  0xB7,  0xB8,
                         0x3B,  0x36,  0xAE,  0xAB,  0x29,  0x29,  0x39,  0x3A,};
         // expected vector
-        __attribute__((section(".hbm"))) static const uint16_t exp_vec[_AVL] = 
+        __attribute__((section(".hbm_west"))) static const uint16_t exp_vec[_AVL] = 
                     {   0xAF80,  0xB060,  0x2E40,  0xB380,  0xB240,  0x2640,  0x3060,  0x3100,
                         0xB460,  0xAF80,  0x2780,  0x2460,  0xA240,  0xA240,  0xB240,  0xB380,};
 

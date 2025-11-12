@@ -14,7 +14,7 @@
 #include "gemm.h"
 #include "preload.h"
 #include "SummaGEMM.h"
-
+#include "SummaGEMMVQ.h"
 int main()
 {
     uint32_t eoc_val = 0;
@@ -50,7 +50,11 @@ int main()
     //execute SUMMA GEMM
     if (flex_get_core_id() == 0 && flex_get_cluster_id() == 0) flex_timer_start();
     flex_global_barrier_xy();
-    SummaGEMMRun(&info);
+    #if VQ_ENABLED == 1
+    SummaGEMMRunVQ(&info);
+    #else
+    // SummaGEMMRun(&info);
+    #endif
     if (flex_get_core_id() == 0 && flex_get_cluster_id() == 0) flex_timer_end();
     flex_global_barrier_xy();
 
@@ -76,7 +80,9 @@ int main()
         }
     }
     flex_global_barrier_xy();
-
+    if (flex_get_cluster_id() == 0 && flex_is_dm_core()){
+        printf(" hbm west: %lx north: %lx east: %lx south: %lx\n", hbm_west(0, 0), hbm_north(0, 0), hbm_east(0, 0), hbm_south(0, 0));
+    }
     /**************************************/
     /*  Program Execution Region -- Stop  */
     /**************************************/

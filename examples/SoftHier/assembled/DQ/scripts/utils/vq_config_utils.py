@@ -29,46 +29,46 @@ def generate_vq_defines(gemm, header_prefix: str = "GEMM") -> List[str]:
     defines = []
 
     # Enable flag
-    defines.append(f"#define {header_prefix}_VQ_ENABLED 1")
+    defines.append(f"#define {header_prefix}VQ_ENABLED 1")
 
     # Algorithm type
     if hasattr(gemm, 'vq_algorithm'):
-        defines.append(f"#define {header_prefix}_VQ_ALGORITHM_{gemm.vq_algorithm.upper()}")
+        defines.append(f"#define {header_prefix}VQ_ALGORITHM_{gemm.vq_algorithm.upper()}")
 
     # Core VQ parameters
-    defines.append(f"#define {header_prefix}_VQ_NUM_CBS ((uint64_t){gemm.vq_num_cb})")
-    defines.append(f"#define {header_prefix}_VQ_NBITS_PER_CB ((uint64_t){gemm.vq_nbits_per_cb})")
-    defines.append(f"#define {header_prefix}_VQ_GROUP_SIZE ((uint64_t){gemm.vq_group_size})")
-    defines.append(f"#define {header_prefix}_VQ_CB_SIZE ((uint64_t){gemm.vq_cb_size})")
+    defines.append(f"#define {header_prefix}VQ_NUM_CBS ((uint64_t){gemm.vq_num_cb})")
+    defines.append(f"#define {header_prefix}VQ_NBITS_PER_CB ((uint64_t){gemm.vq_nbits_per_cb})")
+    defines.append(f"#define {header_prefix}VQ_GROUP_SIZE ((uint64_t){gemm.vq_group_size})")
+    defines.append(f"#define {header_prefix}VQ_CB_SIZE ((uint64_t){gemm.vq_cb_size})")
 
     # Derived parameters
     num_groups_per_row = gemm.n_size // gemm.vq_group_size
     total_groups = gemm.k_size * num_groups_per_row
 
-    defines.append(f"#define {header_prefix}_VQ_NUM_GROUPS_PER_ROW ((uint64_t){num_groups_per_row})")
-    defines.append(f"#define {header_prefix}_VQ_TOTAL_GROUPS ((uint64_t){total_groups})")
+    defines.append(f"#define {header_prefix}VQ_NUM_GROUPS_PER_ROW ((uint64_t){num_groups_per_row})")
+    defines.append(f"#define {header_prefix}VQ_TOTAL_GROUPS ((uint64_t){total_groups})")
 
     # Tile-level parameters (for cluster-level computation)
     if hasattr(gemm, 'vq_num_groups_per_row_tile'):
-        defines.append(f"#define {header_prefix}_VQ_NUM_GROUPS_PER_ROW_TILE ((uint64_t){gemm.vq_num_groups_per_row_tile})")
+        defines.append(f"#define {header_prefix}VQ_NUM_GROUPS_PER_ROW_TILE ((uint64_t){gemm.vq_num_groups_per_row_tile})")
     else:
         num_groups_per_row_tile = gemm.n_tile // gemm.vq_group_size
-        defines.append(f"#define {header_prefix}_VQ_NUM_GROUPS_PER_ROW_TILE ((uint64_t){num_groups_per_row_tile})")
+        defines.append(f"#define {header_prefix}VQ_NUM_GROUPS_PER_ROW_TILE ((uint64_t){num_groups_per_row_tile})")
 
     # Scales (if used)
     if hasattr(gemm, 'vq_use_scales') and gemm.vq_use_scales:
-        defines.append(f"#define {header_prefix}_VQ_USE_SCALES 1")
-        defines.append(f"#define {header_prefix}_VQ_NUM_SCALES ((uint64_t){gemm.k_size})")
+        defines.append(f"#define {header_prefix}VQ_USE_SCALES 1")
+        defines.append(f"#define {header_prefix}VQ_NUM_SCALES ((uint64_t){gemm.k_size})")
     else:
-        defines.append(f"#define {header_prefix}_VQ_NUM_SCALES ((uint64_t)0)")
+        defines.append(f"#define {header_prefix}VQ_NUM_SCALES ((uint64_t)0)")
 
     # Codebook storage format
     if hasattr(gemm, 'vq_codebook_format'):
-        defines.append(f"#define {header_prefix}_VQ_CODEBOOK_FORMAT_{gemm.vq_codebook_format.upper()}")
+        defines.append(f"#define {header_prefix}VQ_CODEBOOK_FORMAT_{gemm.vq_codebook_format.upper()}")
 
     # Index storage format
     if hasattr(gemm, 'vq_index_format'):
-        defines.append(f"#define {header_prefix}_VQ_INDEX_FORMAT_{gemm.vq_index_format.upper()}")
+        defines.append(f"#define {header_prefix}VQ_INDEX_FORMAT_{gemm.vq_index_format.upper()}")
 
     return defines
 
@@ -163,7 +163,7 @@ def generate_vq_data_header(output_path: str,
 
         f.write(f'\n#endif // {header_guard}\n')
 
-
+#TODO move to flexlipfp again
 def write_array_uint8(f, name: str, arr: 'np.ndarray') -> None:
     """Write uint8 array to C header"""
     f.write(f'const uint8_t {name}[{arr.size}] = {{\n')

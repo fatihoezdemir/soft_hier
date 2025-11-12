@@ -185,11 +185,11 @@ void flex_annotate_barrier(uint32_t type){
     *info_reg = type;
 }
 
-void flex_reset_barrier(uint32_t* barrier){
+void flex_reset_barrier(volatile uint32_t* barrier){
     *barrier = flex_get_disable_value();
 }
 
-uint32_t flex_amo_fetch_add(uint32_t* barrier){
+uint32_t flex_amo_fetch_add(volatile uint32_t* barrier){
     return __atomic_fetch_add(barrier, flex_get_enable_value(), __ATOMIC_RELAXED);
 }
 

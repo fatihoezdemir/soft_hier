@@ -66,3 +66,19 @@ pulp
 pulp
 core
 examples/SoftHier/assembled/DQ/*.png
+implementation/*
+pulp
+examples/SoftHier/assembled/DQ/include/dq_data_hbm.h
+examples/SoftHier/assembled/DQ/scripts/include/dq_data_hbm.h
+examples/SoftHier/assembled/DQ/software/SummaGEMM/preload.elf
+.gitignore
+examples/SoftHier/assembled/DQ/extracted_layer0/layer0_down_proj_quantized.safetensors
+examples/SoftHier/assembled/DQ/vq_cache/*
+soft_hier/flex_cluster_sdk/runtime/flex_memory copy.ld
+.vscode/c_cpp_properties.json
+examples/SoftHier/assembled/DQ/QUICK_START.md
+examples/SoftHier/assembled/DQ/VQ_INTEGRATION.md
+examples/SoftHier/assembled/DQ/HBM_EDGE_PLACEMENT.md
+examples/SoftHier/assembled/DQ/scripts/utils/parse_perf.py
+examples/SoftHier/assembled/DQ/software/main_test.c
+.gitignore

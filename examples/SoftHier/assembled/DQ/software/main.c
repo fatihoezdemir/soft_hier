@@ -92,9 +92,13 @@ int main() {
     /*  Program Execution Region -- Stop  */
     /**************************************/
     flex_global_barrier_xy();
-    // if (flex_get_core_id() == 0 && flex_get_cluster_id() == 0) {
-    //     printf("\nfinished!");
-    // }
+    if (flex_get_core_id() == 0 && flex_get_cluster_id() == 0) {
+        printf("\nfinished!");
+        printf("matrix_cb_fp16 address: 0x%08x (expected in HBM_WEST: 0xc0000000-0xdfffffff)\n", 
+       (uintptr_t)&matrix_cb_fp16[0]);
+       printf("matrix_scales_fp16 address: 0x%08x\n", 
+       (uintptr_t)&matrix_scales_fp16[0]);
+    }
     flex_global_barrier_xy();
     flex_eoc(eoc_val);
     return 0;

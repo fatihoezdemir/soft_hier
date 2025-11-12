@@ -98,11 +98,11 @@ VQ_CACHE_DIR ?= ${CUR_DIR}/vq_cache
 
 # VQ data generation from pretrained model
 # Usage: make vq-download REPO_ID=ISTA-DASLab/Llama-2-7b-AQLM-PV-2Bit-2x8-hf LAYER=model.layers.0.mlp.down_proj
-REPO_ID ?= ISTA-DASLab/Llama-2-7b-AQLM-PV-2Bit-2x8-hf
+REPO_ID ?= ISTA-DASLab/Llama-2-7b-AQLM-2Bit-2x8-hf
 WEIGHT_FILE ?= model.safetensors
 LAYER_PREFIX ?= model.layers.0.mlp.down_proj
-VQ_M ?= 512
-VQ_N ?= 256
+VQ_K ?= 512
+VQ_N ?= 512
 
 vq-download:
 	@echo "Downloading and extracting VQ model from HuggingFace..."
@@ -112,7 +112,7 @@ vq-download:
 		--weight_file ${WEIGHT_FILE} \
 		--layer_prefix ${LAYER_PREFIX} \
 		--output_dir ${VQ_CACHE_DIR} \
-		--m_size ${VQ_M} \
+		--k_size ${VQ_K} \
 		--n_size ${VQ_N}
 
 # Generate VQ data using AQLM quantizer (for custom weights)

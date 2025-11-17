@@ -34,12 +34,15 @@ def generate_vq_defines(gemm, header_prefix: str = "GEMM") -> List[str]:
     # Algorithm type
     if hasattr(gemm, 'vq_algorithm'):
         defines.append(f"#define {header_prefix}VQ_ALGORITHM_{gemm.vq_algorithm.upper()}")
+    cb_bytes= 2 if gemm.vq_codebook_format == "fp16" else 1
 
     # Core VQ parameters
-    defines.append(f"#define {header_prefix}VQ_NUM_CBS ((uint64_t){gemm.vq_num_cb})")
-    defines.append(f"#define {header_prefix}VQ_NBITS_PER_CB ((uint64_t){gemm.vq_nbits_per_cb})")
-    defines.append(f"#define {header_prefix}VQ_GROUP_SIZE ((uint64_t){gemm.vq_group_size})")
-    defines.append(f"#define {header_prefix}VQ_CB_SIZE ((uint64_t){gemm.vq_cb_size})")
+    defines.append(f"#define {header_prefix}VQ_NUM_CBS {gemm.vq_num_cb}")
+    defines.append(f"#define {header_prefix}VQ_NBITS_PER_CB {gemm.vq_nbits_per_cb}")
+    defines.append(f"#define {header_prefix}VQ_GROUP_SIZE {gemm.vq_group_size}")
+    defines.append(f"#define {header_prefix}VQ_CB_NUM_CENTROIDS {gemm.vq_cb_size}")
+    defines.append(f"#define {header_prefix}VQ_IDX_BYTES ({int(gemm.vq_nbits_per_cb/8)})")
+    defines.append(f"#define {header_prefix}VQ_CB_BYTES {int(cb_bytes)}")
 
     # Derived parameters
     num_groups_per_row = gemm.n_size // gemm.vq_group_size
@@ -58,9 +61,9 @@ def generate_vq_defines(gemm, header_prefix: str = "GEMM") -> List[str]:
     # Scales (if used)
     if hasattr(gemm, 'vq_use_scales') and gemm.vq_use_scales:
         defines.append(f"#define {header_prefix}VQ_USE_SCALES 1")
-        defines.append(f"#define {header_prefix}VQ_NUM_SCALES ((uint64_t){gemm.k_size})")
+        defines.append(f"#define {header_prefix}VQ_NUM_SCALES {gemm.k_size}")
     else:
-        defines.append(f"#define {header_prefix}VQ_NUM_SCALES ((uint64_t)0)")
+        defines.append(f"#define {header_prefix}VQ_HAS_SCALES 0")
 
     # Codebook storage format
     if hasattr(gemm, 'vq_codebook_format'):

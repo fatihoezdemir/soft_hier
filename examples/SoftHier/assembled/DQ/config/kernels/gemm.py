@@ -60,11 +60,12 @@ class SummaGEMM:
         self.summa_numer_chunk       = 8192
 
         # [VQ]: Vector Quantization Settings
-        self.vq_enabled                = 0
+        self.vq_enabled                = 1
         
         self.vq_force_weight_load      = 0
         self.vq_source                 = "gen"   # Source: "gen" (generated) or "dl" (downloaded)
         self.vq_algorithm              = "aqlm"  # Algorithm: "aqlm", "vptq", etc.
+        self.vq_use_scales            = 1 if  self.vq_algorithm =="aqlm" else 0  # Whether to use per-group scales
         self.vq_num_cb                 = 2       # Number of codebooks
         self.vq_nbits_per_cb           = 8       # Bits per codebook index (2^8 = 256 centroids)
         self.vq_group_size             = 8       # Centroid vector length (group size)
@@ -74,7 +75,7 @@ class SummaGEMM:
 
         # Optional VQ features
         self.vq_codebook_format        = "fp16"  # Codebook storage format
-        self.vq_index_format           = "packed" # for multicodebook only: Index format: "packed" or "separate" or "flattened"
+        self.vq_index_format           = "separate" # for multicodebook only: Index format: "packed" or "separate" or "flattened"
 
         # Pretrained model settings (optional)
         self.vq_use_pretrained         = False   # Load from HuggingFace model

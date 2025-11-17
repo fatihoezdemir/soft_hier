@@ -3,6 +3,7 @@
 
 #include "flex_dma_pattern.h"
 #include "gemm_setup.h"
+#include "preload.h"
 
 static inline void initZBuffer(const SummaGEMMInfo* info) {
     // Initialize Z buffer
@@ -78,7 +79,24 @@ static inline void summa_reduce_and_store_Z(SummaGEMMInfo* info, uint32_t DMA_L1
         /* code */
     }
 }
+#if VQ_ENABLED == 1
+static inline void vq_load_cb(SummaGEMMInfo* info) {
 
-static inline void vq_load_cb(SummaGEMMInfo* info) {}
+    flex_dma_async_1d((uint64_t)(uintptr_t) info->L1_CB[0], (uint64_t)(uintptr_t)VQ_CODEBOOKS_ADDR,
+                      info->L1_CB_size);
+
+    flex_dma_async_1d((uint64_t)(uintptr_t) info->L1_CB[1], (uint64_t)(uintptr_t)VQ_CODEBOOKS_ADDR+info->L1_CB_size,
+                      info->L1_CB_size);         
+    flex_dma_async_wait_all();
+
+}
+
+
+
+
+
+
+#endif
+
 
 #endif //_SUMMA_DMA_H_

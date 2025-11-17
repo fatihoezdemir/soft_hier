@@ -16,11 +16,11 @@ typedef struct {
     volatile uint16_t* scales;     // scales in L1
     volatile uint16_t* indices;    // indices in L1
     volatile uint8_t* indices0_u8; // indices in L1
-    volatile uint8_t* indices_u8; // indices in L1
+    volatile uint8_t* indices_u8;  // indices in L1
 
-    volatile uint8_t* indices1_u8; // indices in L1
+    volatile uint8_t* indices1_u8;  // indices in L1
     volatile uint16_t* W_dq_buf[2]; // optional double buffer for dequantized weights
-    volatile uint16_t* W_dq; // dequantized weights tile in L1
+    volatile uint16_t* W_dq;        // dequantized weights tile in L1
 } L1_DQ_Handles;
 extern L1_DQ_Handles g_l1_dq;
 
@@ -36,9 +36,8 @@ void dequant_group_debug(const uint16_t* a /*cb0[idx0[i]]*/, const uint16_t* b /
     asm volatile("vse16.v v11, (%0)" ::"r"(out) : "v11", "memory"); // Store result
 }
 
-
 //        "lhu      t0, (%[scale])\n\t"          "vmv.v.x  v2, t0\n\t"
-//                  "vfmul.vv v0, v0, v2\n\t"  // v0 = a * scale   "vfmacc.vv v0, v2, v1\n\t" // v0 += scale * b                
+//                  "vfmul.vv v0, v0, v2\n\t"  // v0 = a * scale   "vfmacc.vv v0, v2, v1\n\t" // v0 += scale * b
 //                  "vse16.v  v0, (%[out])\n\t"
 
 void dequant_groupmacc(const uint16_t* a /*cb0[idx0[i]]*/, const uint16_t* b /*cb1[idx1[i]]*/, const uint16_t* scale,
@@ -93,93 +92,88 @@ void dequantize_block_tile_compact(uint16_t row_start, uint16_t rows,
                                    uint16_t idx_groups_stride) // should equal group_count for compactstorage
 {
 
-        uint16_t* W_tile       = (uint16_t*)(uintptr_t)g_l1_dq.W_dq;          // COMPACT tile buffer
-        const uint16_t* idx    = (const uint16_t*)(uintptr_t)g_l1_dq.indices; // COMPACT indices
-        const uint16_t* scales = (const uint16_t*)(uintptr_t)g_l1_dq.scales;
-        const uint16_t* cb0    = (const uint16_t*)(uintptr_t)g_l1_dq.cb;
-        const uint16_t* cb1    = cb0 + VQ_CB_NUM_CENTROIDS * VQ_GROUP_SIZE;
+    uint16_t* W_tile       = (uint16_t*)(uintptr_t)g_l1_dq.W_dq;          // COMPACT tile buffer
+    const uint16_t* idx    = (const uint16_t*)(uintptr_t)g_l1_dq.indices; // COMPACT indices
+    const uint16_t* scales = (const uint16_t*)(uintptr_t)g_l1_dq.scales;
+    const uint16_t* cb0    = (const uint16_t*)(uintptr_t)g_l1_dq.cb;
+    const uint16_t* cb1    = cb0 + VQ_CB_NUM_CENTROIDS * VQ_GROUP_SIZE;
 
-        const uint16_t row_end = row_start + rows;
-        const uint32_t tile_P  = group_count * VQ_GROUP_SIZE;
+    const uint16_t row_end = row_start + rows;
+    const uint32_t tile_P  = group_count * VQ_GROUP_SIZE;
 
-        // printf("[DEBUG][DQ] compact tile dequant: rows [%u..%u), groups=%u, tile_P=%u\n\t", row_start, row_end,
-        //        group_count, tile_P);
+    // printf("[DEBUG][DQ] compact tile dequant: rows [%u..%u), groups=%u, tile_P=%u\n\t", row_start, row_end,
+    //        group_count, tile_P);
 
-        // flex_timer_start(); // puttingtimer here doesntchange theruntime
+    // flex_timer_start(); // puttingtimer here doesntchange theruntime
 
-        asm volatile("vsetvli zero, %0, e16, m1, ta, ma" ::"r"((uint32_t)VQ_GROUP_SIZE));
-        for (uint16_t r = row_start; r < row_end; ++r) {
+    asm volatile("vsetvli zero, %0, e16, m1, ta, ma" ::"r"((uint32_t)VQ_GROUP_SIZE));
+    for (uint16_t r = row_start; r < row_end; ++r) {
 
-            // Indices for row r in the compact tile
-            const uint8_t* p_idx = (const uint8_t*)idx + 2u * r * idx_groups_stride;
+        // Indices for row r in the compact tile
+        const uint8_t* p_idx = (const uint8_t*)idx + 2u * r * idx_groups_stride;
 
-            // Output row r in the COMPACT W_dq tile
-            uint16_t* p_out = W_tile + r * tile_P;
+        // Output row r in the COMPACT W_dq tile
+        uint16_t* p_out = W_tile + r * tile_P;
 
-            const uint16_t* scale_ptr = &scales[r];
-            for (uint16_t g = 0; g < group_count; ++g) {
-                const uint8_t idx0 = p_idx[0];
-                const uint8_t idx1 = p_idx[1];
-                p_idx += 2;
+        const uint16_t* scale_ptr = &scales[r];
+        for (uint16_t g = 0; g < group_count; ++g) {
+            const uint8_t idx0 = p_idx[0];
+            const uint8_t idx1 = p_idx[1];
+            p_idx += 2;
 
-                const uint16_t* a = cb0 + (unsigned)idx0 * VQ_GROUP_SIZE;
-                const uint16_t* b = cb1 + (unsigned)idx1 * VQ_GROUP_SIZE;
-                // dequant_group_legacy(a, b, scale_ptr, p_out);
-                dequant_group(a, b, scale_ptr, p_out);
-                // dequant_groupmacc(a, b, scale_ptr, p_out);
-                p_out += VQ_GROUP_SIZE;
-            }
+            const uint16_t* a = cb0 + (unsigned)idx0 * VQ_GROUP_SIZE;
+            const uint16_t* b = cb1 + (unsigned)idx1 * VQ_GROUP_SIZE;
+            // dequant_group_legacy(a, b, scale_ptr, p_out);
+            dequant_group(a, b, scale_ptr, p_out);
+            // dequant_groupmacc(a, b, scale_ptr, p_out);
+            p_out += VQ_GROUP_SIZE;
         }
-
-    
+    }
 }
 void dequantize_block_tile_compactu8(uint16_t row_start, uint16_t rows,
-                                   uint16_t group_count,       // groups in this tile
-                                   uint16_t idx_groups_stride) // should equal group_count for compactstorage
+                                     uint16_t group_count,       // groups in this tile
+                                     uint16_t idx_groups_stride) // should equal group_count for compactstorage
 {
-        uint16_t* W_tile       = (uint16_t*)(uintptr_t)g_l1_dq.W_dq;          // COMPACT tile buffer
-        // const uint16_t* idx    = (const uint16_t*)(uintptr_t)g_l1_dq.indices; // COMPACT indices
-        const uint8_t* idx0 = (const uint8_t*)(uintptr_t)g_l1_dq.indices0_u8; // COMPACT indices
-        const uint8_t* idx1 = (const uint8_t*)(uintptr_t)g_l1_dq.indices1_u8; // COMPACT indices
+    uint16_t* W_tile = (uint16_t*)(uintptr_t)g_l1_dq.W_dq; // COMPACT tile buffer
+    // const uint16_t* idx    = (const uint16_t*)(uintptr_t)g_l1_dq.indices; // COMPACT indices
+    const uint8_t* idx0 = (const uint8_t*)(uintptr_t)g_l1_dq.indices0_u8; // COMPACT indices
+    const uint8_t* idx1 = (const uint8_t*)(uintptr_t)g_l1_dq.indices1_u8; // COMPACT indices
 
-        const uint16_t* scales = (const uint16_t*)(uintptr_t)g_l1_dq.scales;
-        const uint16_t* cb0    = (const uint16_t*)(uintptr_t)g_l1_dq.cb;
-        const uint16_t* cb1    = cb0 + VQ_CB_NUM_CENTROIDS * VQ_GROUP_SIZE;
+    const uint16_t* scales = (const uint16_t*)(uintptr_t)g_l1_dq.scales;
+    const uint16_t* cb0    = (const uint16_t*)(uintptr_t)g_l1_dq.cb;
+    const uint16_t* cb1    = cb0 + VQ_CB_NUM_CENTROIDS * VQ_GROUP_SIZE;
 
-        const uint16_t row_end = row_start + rows;
-        const uint32_t tile_P  = group_count * VQ_GROUP_SIZE;
+    const uint16_t row_end = row_start + rows;
+    const uint32_t tile_P  = group_count * VQ_GROUP_SIZE;
 
-        // printf("[DEBUG][DQ] compact tile dequant: rows [%u..%u), groups=%u, tile_P=%u\n\t", row_start, row_end,
-        //        group_count, tile_P);
+    // printf("[DEBUG][DQ] compact tile dequant: rows [%u..%u), groups=%u, tile_P=%u\n\t", row_start, row_end,
+    //        group_count, tile_P);
 
-        // flex_timer_start(); // puttingtimer here doesntchange theruntime
+    // flex_timer_start(); // puttingtimer here doesntchange theruntime
 
-        asm volatile("vsetvli zero, %0, e16, m1, ta, ma" ::"r"((uint32_t)VQ_GROUP_SIZE));
-        for (uint16_t r = row_start; r < row_end; ++r) {
+    asm volatile("vsetvli zero, %0, e16, m1, ta, ma" ::"r"((uint32_t)VQ_GROUP_SIZE));
+    for (uint16_t r = row_start; r < row_end; ++r) {
 
-            // Indices for row r in the compact tile
-            // const uint8_t* p_idx = (const uint8_t*)idx + 2u * r * idx_groups_stride;
-            const uint8_t* p_idx0 = (const uint8_t*)idx0 + 1u * r * idx_groups_stride;
-            const uint8_t* p_idx1 = (const uint8_t*)idx1 + 1u * r * idx_groups_stride;
+        // Indices for row r in the compact tile
+        // const uint8_t* p_idx = (const uint8_t*)idx + 2u * r * idx_groups_stride;
+        const uint8_t* p_idx0 = (const uint8_t*)idx0 + 1u * r * idx_groups_stride;
+        const uint8_t* p_idx1 = (const uint8_t*)idx1 + 1u * r * idx_groups_stride;
 
-            // Output row r in the COMPACT W_dq tile
-            uint16_t* p_out = W_tile + r * tile_P;
+        // Output row r in the COMPACT W_dq tile
+        uint16_t* p_out = W_tile + r * tile_P;
 
-            const uint16_t* scale_ptr = &scales[r];
-            for (uint16_t g = 0; g < group_count; ++g) {
+        const uint16_t* scale_ptr = &scales[r];
+        for (uint16_t g = 0; g < group_count; ++g) {
 
-
-                const uint16_t* a = cb0 + (unsigned)idx0 * VQ_GROUP_SIZE;
-                const uint16_t* b = cb1 + (unsigned)idx1 * VQ_GROUP_SIZE;
-                // dequant_group_legacy(a, b, scale_ptr, p_out);
-                dequant_group(a, b, scale_ptr, p_out);
-                // dequant_groupmacc(a, b, scale_ptr, p_out);
-                p_out += VQ_GROUP_SIZE;
-            }
+            const uint16_t* a = cb0 + (unsigned)idx0 * VQ_GROUP_SIZE;
+            const uint16_t* b = cb1 + (unsigned)idx1 * VQ_GROUP_SIZE;
+            // dequant_group_legacy(a, b, scale_ptr, p_out);
+            dequant_group(a, b, scale_ptr, p_out);
+            // dequant_groupmacc(a, b, scale_ptr, p_out);
+            p_out += VQ_GROUP_SIZE;
         }
-        // flex_timer_end();
-    
-
+    }
+    // flex_timer_end();
 }
 void dequant_groupmacc_improved(const uint8_t* idx0, const uint8_t* idx1, const uint16_t* cb0_ptr,
                                 const uint16_t* cb1_ptr, const uint16_t* scale, uint16_t* out, uint16_t groups_total) {
@@ -211,23 +205,20 @@ void dequant_groupmacc_improved(const uint8_t* idx0, const uint8_t* idx1, const 
         (void)vl_idx;
         const uint32_t payload_elems = groups_this_iter * VQ_GROUP_SIZE;
         asm volatile("vsetvli %0, %1, e8, m1, ta, ma" : "=r"(vl_idx) : "r"(groups_this_iter));
-        asm volatile("vle8.v v0, (%0)" ::"r"(idx0_ptr) : );
-        asm volatile("vle8.v v1, (%0)" ::"r"(idx1_ptr) : );
-        
+        asm volatile("vle8.v v0, (%0)" ::"r"(idx0_ptr) :);
+        asm volatile("vle8.v v1, (%0)" ::"r"(idx1_ptr) :);
+
         asm volatile("vsetvli %0, %1, e16, m8, ta, ma" : "=r"(vl_elems) : "r"(payload_elems));
 
         EMIT_WORD_IMM(VLBLK1EI8_V(RVV_V8, RVV_V0, RVX_T0, 1));
         asm volatile("vfmul.vf v24, v8, fa0");
         EMIT_WORD_IMM(VLBLK1EI8_V(RVV_V16, RVV_V1, RVX_T1, 1));
 
-        asm volatile(
-            "vfmacc.vf v24, fa0, v16\n\t"
-            "vse16.v v24, (%0)"
-            : 
-            : "r"(out_ptr)
-            : "memory", "v24"
-        );
-        
+        asm volatile("vfmacc.vf v24, fa0, v16\n\t"
+                     "vse16.v v24, (%0)"
+                     :
+                     : "r"(out_ptr)
+                     : "memory", "v24");
 
         remaining_groups -= groups_this_iter;
         group_offset += groups_this_iter;
@@ -320,7 +311,8 @@ void dequantize_block_tile_compact_fused_gemvs(uint16_t row_start, uint16_t rows
 }
 
 void dequant_groupmacc_improvedfused(const uint8_t* idx0, const uint8_t* idx1, const uint16_t* cb0_ptr,
-                                const uint16_t* cb1_ptr, const uint16_t* x_vec,const uint16_t* scale, uint16_t* out, uint16_t groups_total,uint16_t r) {
+                                     const uint16_t* cb1_ptr, const uint16_t* x_vec, const uint16_t* scale,
+                                     uint16_t* out, uint16_t groups_total, uint16_t r) {
     if (groups_total == 0) {
         return;
     }
@@ -331,12 +323,11 @@ void dequant_groupmacc_improvedfused(const uint8_t* idx0, const uint8_t* idx1, c
     asm volatile("mv t1, %0" : : "r"(cb1_ptr) : "t1");
     // asm volatile("flw fa0, (%0)" ::"r"(scale) : "fa0", "memory");
     asm volatile("flh fa0, (%0)\n"        // fa0 = fp16 scale[r]
-    "flh fa1, (%1)\n"        // fa1 = fp16 x[r]
-    "fmul.h fa2, fa0, fa1\n" // fa2 = scale * x (fp16 multiply)    // store result as raw fp16
-    :
-    : "r"(scale), "r"(x_vec)
-    : "fa0", "fa1", "fa2", "memory");
-
+                 "flh fa1, (%1)\n"        // fa1 = fp16 x[r]
+                 "fmul.h fa2, fa0, fa1\n" // fa2 = scale * x (fp16 multiply)    // store result as raw fp16
+                 :
+                 : "r"(scale), "r"(x_vec)
+                 : "fa0", "fa1", "fa2", "memory");
 
     while (remaining_groups > 0) {
         const uint32_t avl_elems = (uint32_t)remaining_groups * VQ_GROUP_SIZE;
@@ -357,30 +348,27 @@ void dequant_groupmacc_improvedfused(const uint8_t* idx0, const uint8_t* idx1, c
         asm volatile("vsetvli %0, %1, e8, m1, ta, ma" : "=r"(vl_idx) : "r"(groups_this_iter));
         (void)vl_idx;
         asm volatile("vle8.v v0, (%0)" ::"r"(idx0_ptr) : "memory");
-        
+
         asm volatile("vle8.v v1, (%0)" ::"r"(idx1_ptr) : "memory");
 
         const uint32_t payload_elems = groups_this_iter * VQ_GROUP_SIZE;
 
         asm volatile("vsetvli %0, %1, e16, m8, ta, ma" : "=r"(vl_elems) : "r"(payload_elems));
-        if(r==0){
-        EMIT_WORD_IMM(VLBLK1EI8_V(RVV_V8, RVV_V0, RVX_T0, 1));
-        asm volatile("vfmul.vf v24, v8, fa2");
-        EMIT_WORD_IMM(VLBLK1EI8_V(RVV_V16, RVV_V1, RVX_T1, 1));
+        if (r == 0) {
+            EMIT_WORD_IMM(VLBLK1EI8_V(RVV_V8, RVV_V0, RVX_T0, 1));
+            asm volatile("vfmul.vf v24, v8, fa2");
+            EMIT_WORD_IMM(VLBLK1EI8_V(RVV_V16, RVV_V1, RVX_T1, 1));
 
-        asm volatile("vfmacc.vf v24, fa2, v16");
-        // asm volatile("vfadd.vv v24, v8, v16");
-        // asm volatile("vfmul.vf v24, v24, fa0");
-    }
-    else{
-        EMIT_WORD_IMM(VLBLK1EI8_V(RVV_V8, RVV_V0, RVX_T0, 1));
-        asm volatile("vfmacc.vf v24, fa2, v8");
-        EMIT_WORD_IMM(VLBLK1EI8_V(RVV_V16, RVV_V1, RVX_T1, 1));
+            asm volatile("vfmacc.vf v24, fa2, v16");
+            // asm volatile("vfadd.vv v24, v8, v16");
+            // asm volatile("vfmul.vf v24, v24, fa0");
+        } else {
+            EMIT_WORD_IMM(VLBLK1EI8_V(RVV_V8, RVV_V0, RVX_T0, 1));
+            asm volatile("vfmacc.vf v24, fa2, v8");
+            EMIT_WORD_IMM(VLBLK1EI8_V(RVV_V16, RVV_V1, RVX_T1, 1));
 
-        asm volatile("vfmacc.vf v24, fa2, v16");
-
-
-    }
+            asm volatile("vfmacc.vf v24, fa2, v16");
+        }
         asm volatile("vse16.v v24, (%0)" ::"r"(out_ptr) : "memory");
 
         remaining_groups -= groups_this_iter;
@@ -422,9 +410,9 @@ void dequantize_block_tile_compact_improvedfused(uint16_t row_start, uint16_t ro
             uint16_t* p_out = y_out;
 
             const uint16_t* scale_ptr = &scales[r];
-            const uint16_t* x_ptr = &x_vec[r];
+            const uint16_t* x_ptr     = &x_vec[r];
 
-            dequant_groupmacc_improvedfused(p_idx0, p_idx1, cb0, cb1,x_ptr, scale_ptr, p_out, group_count,r);
+            dequant_groupmacc_improvedfused(p_idx0, p_idx1, cb0, cb1, x_ptr, scale_ptr, p_out, group_count, r);
         }
         flex_timer_end();
     }
@@ -463,10 +451,6 @@ void dequantize_block_tile_compact_improved(uint16_t row_start, uint16_t rows,
             uint16_t* p_out = W_tile + r * tile_P;
 
             const uint16_t* scale_ptr = &scales[r];
-
-
-            
-
 
             dequant_groupmacc_improved(p_idx0, p_idx1, cb0, cb1, scale_ptr, p_out, group_count);
         }

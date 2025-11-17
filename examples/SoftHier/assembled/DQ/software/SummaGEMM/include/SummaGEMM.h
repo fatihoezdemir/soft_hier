@@ -1,350 +1,117 @@
 #ifndef _SUMMA_GEMM_H_
 #define _SUMMA_GEMM_H_
 
-#include "flex_runtime.h"
-#include "flex_printf.h"
-#include "flex_redmule.h"
 #include "flex_dma_pattern.h"
 #include "flex_group_barrier.h"
+#include "flex_printf.h"
+#include "flex_redmule.h"
+#include "flex_runtime.h"
 #include "gemm_setup.h"
+#include "summa_dma.h"
+#include "summa_index.h"
 
-
-void SummaGEMMRun(SummaGEMMInfo * info)
-{
+void SummaGEMMRun(SummaGEMMInfo* info) {
     flex_global_barrier_xy();
 
-    if (info->cluster_active)
-    {
-        uint32_t DMA_L1_Z = info->L1_Z2;
+    if (info->cluster_active) {
+        uint32_t DMA_L1_Z     = info->L1_Z2;
         uint32_t REDMULE_L1_Z = info->L1_Z1;
-
-        //Initialize Z buffer
-        if (flex_is_dm_core())
-        {
-            flex_dma_async_1d(info->L1_Z1,zomem(0),info->L1_Z_size);
-            flex_dma_async_1d(info->L1_Z2,zomem(0),info->L1_Z_size);
-            flex_dma_async_wait_all();
-        }
+        initZBuffer(info);
         flex_intra_cluster_sync();
 
-        for (int m = 0; m < info->M_iter; ++m)
-        {
-            for (int n = 0; n < info->N_iter; ++n)
-            {
-                //Prefetching PIPELINE PROLOGUE
-                if (flex_is_dm_core())
-                {
-                    if (info->cluster_for_rowwise == 1)
-                    {
-                        //load X from west edge
-#if GEMM_RESHA_X_FROM_ENABLE == 1
-                        uint64_t origin_elem_offest = (info->X_tile_base_offset + m * info->X_tile_M_iter_offset + n * info->X_tile_N_iter_offset) / DATA_TYPE_BYTE;
-                        uint64_t origin_k = origin_elem_offest % GEMM_K_SIZE;
-                        uint64_t origin_m = origin_elem_offest / GEMM_K_SIZE;
-                        #if defined(GEMM_RESHA_X_FROM_TALL)
-                            uint64_t num_bulk = origin_k / GEMM_RESHAPE_X_FROM_K;
-                            uint64_t mapped_k = origin_k % GEMM_RESHAPE_X_FROM_K;
-                            uint64_t mapped_m = num_bulk * info->M_size + origin_m;
-                        #endif
-                        #if defined(GEMM_RESHA_X_FROM_THIN)
-                            uint64_t num_bulk = origin_m / GEMM_RESHA_X_FROM_M;
-                            uint64_t mapped_m = origin_m % GEMM_RESHA_X_FROM_M;
-                            uint64_t mapped_k = num_bulk * info->K_size + origin_k;
-                        #endif
-                        uint64_t mapped_offset = (mapped_m * GEMM_RESHAPE_X_FROM_K + mapped_k) * DATA_TYPE_BYTE;
-                        flex_dma_async_2d(
-                            info->L1_X1, /*destination*/
-                            info->X_tile_base + mapped_offset, /*source*/
-                            info->K_tile * DATA_TYPE_BYTE, /*transfer size*/
-                            info->K_tile * DATA_TYPE_BYTE, /*destination stride*/
-                            GEMM_RESHAPE_X_FROM_K * DATA_TYPE_BYTE, /*source stride*/
-                            info->M_tile /*repeat*/); //Start 2D iDMA
-#else
-                        flex_dma_async_2d(
-                            info->L1_X1, /*destination*/
-                            info->X_tile_base + m * info->X_tile_M_iter_offset + n * info->X_tile_N_iter_offset, /*source*/
-                            info->K_tile * DATA_TYPE_BYTE, /*transfer size*/
-                            info->K_tile * DATA_TYPE_BYTE, /*destination stride*/
-                            info->K_size * DATA_TYPE_BYTE, /*source stride*/
-                            info->M_tile /*repeat*/); //Start 2D iDMA
-#endif
-                        flex_dma_async_wait_all(); // Wait for iDMA Finishing
-                        //row-wise multicast
-                        if (info->summa_group_x > 1)
-                        {
-                            flex_dma_async_broadcast(
-                                info->L1_X1/*dst_offset*/,
-                                info->L1_X1/*src_offset*/,
-                                info->L1_X_size/*transfer_size*/,
-                                info->group.wakeup_row_mask/*row_mask*/,
-                                (ARCH_NUM_CLUSTER_Y - 1)/*col_mask*/);
-                            flex_dma_async_wait_all(); // Wait for iDMA Finishing
-                        }
+        for (int m = 0; m < info->M_iter; ++m) {
+            for (int n = 0; n < info->N_iter; ++n) {
+                // Prefetching PIPELINE PROLOGUE
+                if (flex_is_dm_core()) {
+                    if (info->cluster_for_rowwise == 1) {
+                        // load X from west edge
+                        summa_load_X_tile(info, info->L1_X1, m, n, 0);
                     }
-                    if (info->cluster_for_colwise == 1)
-                    {
-                        //load W from south edge
-                        flex_dma_async_2d(
-                            info->L1_W1, /*destination*/
-                            info->W_tile_base + m * info->W_tile_M_iter_offset + n * info->W_tile_N_iter_offset, /*source*/
-                            info->N_tile * DATA_TYPE_BYTE, /*transfer size*/
-                            info->N_tile * DATA_TYPE_BYTE, /*destination stride*/
-                            info->N_size * DATA_TYPE_BYTE, /*source stride*/
-                            info->K_tile /*repeat*/); //Start 2D iDMA
-                        flex_dma_async_wait_all(); // Wait for iDMA Finishing
-                        //col-wise multicast
-                        if (info->summa_group_y > 1)
-                        {
-                            flex_dma_async_broadcast(
-                                info->L1_W1/*dst_offset*/,
-                                info->L1_W1/*src_offset*/,
-                                info->L1_W_size/*transfer_size*/,
-                                (ARCH_NUM_CLUSTER_X - 1)/*row_mask*/,
-                                info->group.wakeup_col_mask/*col_mask*/);
-                            flex_dma_async_wait_all(); // Wait for iDMA Finishing
-                        }
+
+                    if (info->cluster_for_colwise == 1) {
+                        // load W from south edge
+                        summa_load_W_tile(info, info->L1_W1, m, n, 0);
                     }
                 }
 
-                //PIPELINE START
-                //Double buffering, update pointers
-                for (int k = 1; k <= info->K_iter; ++k)
-                {
+                // PIPELINE START
+                // Double buffering, update pointers
+                for (int k = 1; k <= info->K_iter; ++k) {
                     uint32_t DMA_L1_X;
                     uint32_t DMA_L1_W;
                     uint32_t REDMULE_L1_X;
                     uint32_t REDMULE_L1_W;
 
-                    DMA_L1_X     = (k % 2 == 1)? info->L1_X2 : info->L1_X1;
-                    DMA_L1_W     = (k % 2 == 1)? info->L1_W2 : info->L1_W1; 
-                    REDMULE_L1_X = (k % 2 == 1)? info->L1_X1 : info->L1_X2;
-                    REDMULE_L1_W = (k % 2 == 1)? info->L1_W1 : info->L1_W2;
-//SYNC
+                    DMA_L1_X     = (k % 2 == 1) ? info->L1_X2 : info->L1_X1;
+                    DMA_L1_W     = (k % 2 == 1) ? info->L1_W2 : info->L1_W1;
+                    REDMULE_L1_X = (k % 2 == 1) ? info->L1_X1 : info->L1_X2;
+                    REDMULE_L1_W = (k % 2 == 1) ? info->L1_W1 : info->L1_W2;
+                    // SYNC
                     grid_sync_group_barrier_xy(&(info->group));
                     if (flex_is_first_core())
-                    {
                         flex_redmule_wait();
-                    }
                     flex_intra_cluster_sync();
-
-                    if (flex_is_dm_core())
-                    {
-                        if (k < info->K_iter)
-                        {
-                            if (info->cluster_for_rowwise == 1)
-                            {
-                                //load X from west edge
-#if GEMM_RESHA_X_FROM_ENABLE == 1
-                                uint64_t origin_elem_offest = (info->X_tile_base_offset + m * info->X_tile_M_iter_offset + n * info->X_tile_N_iter_offset + k * info->X_tile_K_iter_offset) / DATA_TYPE_BYTE;
-                                uint64_t origin_k = origin_elem_offest % GEMM_K_SIZE;
-                                uint64_t origin_m = origin_elem_offest / GEMM_K_SIZE;
-                                #if defined(GEMM_RESHA_X_FROM_TALL)
-                                    uint64_t num_bulk = origin_k / GEMM_RESHAPE_X_FROM_K;
-                                    uint64_t mapped_k = origin_k % GEMM_RESHAPE_X_FROM_K;
-                                    uint64_t mapped_m = num_bulk * info->M_size + origin_m;
-                                #endif
-                                #if defined(GEMM_RESHA_X_FROM_THIN)
-                                    uint64_t num_bulk = origin_m / GEMM_RESHA_X_FROM_M;
-                                    uint64_t mapped_m = origin_m % GEMM_RESHA_X_FROM_M;
-                                    uint64_t mapped_k = num_bulk * info->K_size + origin_k;
-                                #endif
-                                uint64_t mapped_offset = (mapped_m * GEMM_RESHAPE_X_FROM_K + mapped_k) * DATA_TYPE_BYTE;
-                                flex_dma_async_2d(
-                                    DMA_L1_X, /*destination*/
-                                    info->X_tile_base + mapped_offset, /*source*/
-                                    info->K_tile * DATA_TYPE_BYTE, /*transfer size*/
-                                    info->K_tile * DATA_TYPE_BYTE, /*destination stride*/
-                                    GEMM_RESHAPE_X_FROM_K * DATA_TYPE_BYTE, /*source stride*/
-                                    info->M_tile /*repeat*/); //Start 2D iDMA
-#else
-                                flex_dma_async_2d(
-                                    DMA_L1_X, /*destination*/
-                                    info->X_tile_base + m * info->X_tile_M_iter_offset + n * info->X_tile_N_iter_offset + k * info->X_tile_K_iter_offset, /*source*/
-                                    info->K_tile * DATA_TYPE_BYTE, /*transfer size*/
-                                    info->K_tile * DATA_TYPE_BYTE, /*destination stride*/
-                                    info->K_size * DATA_TYPE_BYTE, /*source stride*/
-                                    info->M_tile /*repeat*/); //Start 2D iDMA
-#endif
-                                flex_dma_async_wait_all(); // Wait for iDMA Finishing
-                                //row-wise multicast
-                                if (info->summa_group_x > 1)
-                                {
-                                    flex_dma_async_broadcast(
-                                        DMA_L1_X/*dst_offset*/,
-                                        DMA_L1_X/*src_offset*/,
-                                        info->L1_X_size/*transfer_size*/,
-                                        info->group.wakeup_row_mask/*row_mask*/,
-                                        (ARCH_NUM_CLUSTER_Y - 1)/*col_mask*/);
-                                    flex_dma_async_wait_all(); // Wait for iDMA Finishing
-                                }
+                    if (flex_is_dm_core()) {
+                        if (k < info->K_iter) {
+                            if (info->cluster_for_rowwise == 1) {
+                                // load X from west edge
+                                summa_load_X_tile(info, DMA_L1_X, m, n, k);
                             }
-                            if (info->cluster_for_colwise == 1)
-                            {
-                                //load W from south edge
-                                flex_dma_async_2d(
-                                    DMA_L1_W, /*destination*/
-                                    info->W_tile_base + m * info->W_tile_M_iter_offset + n * info->W_tile_N_iter_offset + k * info->W_tile_K_iter_offset, /*source*/
-                                    info->N_tile * DATA_TYPE_BYTE, /*transfer size*/
-                                    info->N_tile * DATA_TYPE_BYTE, /*destination stride*/
-                                    info->N_size * DATA_TYPE_BYTE, /*source stride*/
-                                    info->K_tile /*repeat*/); //Start 2D iDMA
-                                flex_dma_async_wait_all(); // Wait for iDMA Finishing
-                                //col-wise multicast
-                                if (info->summa_group_y > 1)
-                                {
-                                    flex_dma_async_broadcast(
-                                        DMA_L1_W/*dst_offset*/,
-                                        DMA_L1_W/*src_offset*/,
-                                        info->L1_W_size/*transfer_size*/,
-                                        (ARCH_NUM_CLUSTER_X - 1)/*row_mask*/,
-                                        info->group.wakeup_col_mask/*col_mask*/);
-                                    flex_dma_async_wait_all(); // Wait for iDMA Finishing
-                                }
+                            if (info->cluster_for_colwise == 1) {
+                                // load W from south edge
+                                summa_load_W_tile(info, DMA_L1_W, m, n, k);
                             }
                         }
 
-                        if (info->store_recorded == 1 && info->store_active == 1)
-                        {
-                            uint32_t start_id = (info->store_id < info->store_step)? 0 : info->store_id - info->store_step;
+                        if (info->store_recorded == 1 && info->store_active == 1) {
+                            uint32_t start_id =
+                                (info->store_id < info->store_step) ? 0 : info->store_id - info->store_step;
                             uint32_t bid = (start_id + info->store_id_offset) % info->summa_group_x;
                             uint32_t eid = (info->store_id + info->store_id_offset) % info->summa_group_x;
-                            if (((info->cluster_in_group_id_x >= bid && info->cluster_in_group_id_x < eid) && eid > bid) || \
-                                ((info->cluster_in_group_id_x >= bid || info->cluster_in_group_id_x < eid) && eid <= bid))
-                            {
-                                if (info->group_reduction == 1)
-                                {
-                                    //Reduce Z
-                                    flex_dma_async_reduction(
-                                        DMA_L1_Z/*dst_offset*/,
-                                        DMA_L1_Z/*src_offset*/,
-                                        info->L1_Z_size/*transfer_size*/,
-                                        COLLECTIVE_REDSUM_TYPE/*fmt*/,
-                                        ~info->group.wakeup_row_mask/*row_mask*/,
-                                        ~info->group.wakeup_col_mask/*col_mask*/);
-                                    flex_dma_async_wait_all(); // Wait for iDMA Finishing
-                                }
-                                //Store Z
-#if GEMM_RESHA_Z_TO_ENABLE == 1
-                                uint64_t origin_elem_offest = (info->Z_tile_base_offset + info->store_m * info->Z_tile_M_iter_offset + info->store_n * info->Z_tile_N_iter_offset) / DATA_TYPE_BYTE;
-                                uint64_t origin_n = origin_elem_offest % GEMM_N_SIZE;
-                                uint64_t origin_m = origin_elem_offest / GEMM_N_SIZE;
-                                #if defined(GEMM_RESHA_Z_TO_TALL)
-                                    uint64_t num_buln = origin_n / GEMM_RESHAPE_Z_TO_N;
-                                    uint64_t mapped_n = origin_n % GEMM_RESHAPE_Z_TO_N;
-                                    uint64_t mapped_m = num_buln * info->M_size + origin_m;
-                                #endif
-                                #if defined(GEMM_RESHA_Z_TO_THIN)
-                                    uint64_t num_buln = origin_m / GEMM_RESHA_Z_TO_M;
-                                    uint64_t mapped_m = origin_m % GEMM_RESHA_Z_TO_M;
-                                    uint64_t mapped_n = num_buln * info->N_size + origin_n;
-                                #endif
-                                uint64_t mapped_offset = (mapped_m * GEMM_RESHAPE_Z_TO_N + mapped_n) * DATA_TYPE_BYTE;
-                                flex_dma_async_2d(
-                                    info->Z_tile_base + mapped_offset, /*destination*/
-                                    DMA_L1_Z, /*source*/
-                                    info->N_tile * DATA_TYPE_BYTE, /*transfer size*/
-                                    GEMM_RESHAPE_Z_TO_N * DATA_TYPE_BYTE, /*destination stride*/
-                                    info->N_tile * DATA_TYPE_BYTE, /*source stride*/
-                                    info->M_tile /*repeat*/); //Start 2D iDMA
-#else
-                                flex_dma_async_2d(
-                                    info->Z_tile_base + info->store_m * info->Z_tile_M_iter_offset + info->store_n * info->Z_tile_N_iter_offset, /*destination*/
-                                    DMA_L1_Z, /*source*/
-                                    info->N_tile * DATA_TYPE_BYTE, /*transfer size*/
-                                    info->N_size * DATA_TYPE_BYTE, /*destination stride*/
-                                    info->N_tile * DATA_TYPE_BYTE, /*source stride*/
-                                    info->M_tile /*repeat*/); //Start 2D iDMA
-#endif
-                                flex_dma_async_wait_all(); // Wait for iDMA Finishing
-                                //Clear Z
-                                flex_dma_async_1d(DMA_L1_Z,zomem(0),info->L1_Z_size);
-                                flex_dma_async_wait_all(); // Wait for iDMA Finishing
+                            if (((info->cluster_in_group_id_x >= bid && info->cluster_in_group_id_x < eid) &&
+                                 eid > bid) ||
+                                ((info->cluster_in_group_id_x >= bid || info->cluster_in_group_id_x < eid) &&
+                                 eid <= bid)) {
+
+                                summa_reduce_and_store_Z(info, DMA_L1_Z, false);
                             }
+
                             info->store_id = start_id;
                         }
                     }
 
-                    if (flex_is_first_core())
-                    {
+                    if (flex_is_first_core()) {
                         flex_redmule_config(info->M_tile, info->K_tile, info->N_tile);
                         flex_redmule_trigger(REDMULE_L1_X, REDMULE_L1_W, REDMULE_L1_Z, REDMULE_COMPUTE_TYPE);
                     }
                 }
 
-                //Storing
-                if (info->group_reduction == 1)
-                {
+                // Storing
+                if (info->group_reduction == 1) {
                     flex_global_barrier_xy();
                 } else {
                     grid_sync_group_barrier_xy(&(info->group));
                 }
                 info->store_recorded = 1;
-                info->store_m = m;
-                info->store_n = n;
-                info->store_id = info->summa_group_x;
-                uint32_t tmp_z = DMA_L1_Z;
-                DMA_L1_Z = REDMULE_L1_Z;
-                REDMULE_L1_Z = tmp_z;
-                if (flex_is_first_core())
-                {
+                info->store_m        = m;
+                info->store_n        = n;
+                info->store_id       = info->summa_group_x;
+                uint32_t tmp_z       = DMA_L1_Z;
+                DMA_L1_Z             = REDMULE_L1_Z;
+                REDMULE_L1_Z         = tmp_z;
+                if (flex_is_first_core()) {
                     flex_redmule_wait();
                 }
                 flex_intra_cluster_sync();
             }
         }
-        // PIPELINE EPILOGUE
-        if (flex_is_dm_core() && info->store_active == 1)
-        {
-            if (info->group_reduction == 1)
-            {
-                //Reduce Z
-                flex_dma_async_reduction(
-                    DMA_L1_Z/*dst_offset*/,
-                    DMA_L1_Z/*src_offset*/,
-                    info->L1_Z_size/*transfer_size*/,
-                    COLLECTIVE_REDSUM_TYPE/*fmt*/,
-                    ~info->group.wakeup_row_mask/*row_mask*/,
-                    ~info->group.wakeup_col_mask/*col_mask*/);
-                flex_dma_async_wait_all(); // Wait for iDMA Finishing
-            }
-            //Store Z
-#if GEMM_RESHA_Z_TO_ENABLE == 1
-            uint64_t origin_elem_offest = (info->Z_tile_base_offset + info->store_m * info->Z_tile_M_iter_offset + info->store_n * info->Z_tile_N_iter_offset) / DATA_TYPE_BYTE;
-            uint64_t origin_n = origin_elem_offest % GEMM_N_SIZE;
-            uint64_t origin_m = origin_elem_offest / GEMM_N_SIZE;
-            #if defined(GEMM_RESHA_Z_TO_TALL)
-                uint64_t num_buln = origin_n / GEMM_RESHAPE_Z_TO_N;
-                uint64_t mapped_n = origin_n % GEMM_RESHAPE_Z_TO_N;
-                uint64_t mapped_m = num_buln * info->M_size + origin_m;
-            #endif
-            #if defined(GEMM_RESHA_Z_TO_THIN)
-                uint64_t num_buln = origin_m / GEMM_RESHA_Z_TO_M;
-                uint64_t mapped_m = origin_m % GEMM_RESHA_Z_TO_M;
-                uint64_t mapped_n = num_buln * info->N_size + origin_n;
-            #endif
-            uint64_t mapped_offset = (mapped_m * GEMM_RESHAPE_Z_TO_N + mapped_n) * DATA_TYPE_BYTE;
-            flex_dma_async_2d(
-                info->Z_tile_base + mapped_offset, /*destination*/
-                DMA_L1_Z, /*source*/
-                info->N_tile * DATA_TYPE_BYTE, /*transfer size*/
-                GEMM_RESHAPE_Z_TO_N * DATA_TYPE_BYTE, /*destination stride*/
-                info->N_tile * DATA_TYPE_BYTE, /*source stride*/
-                info->M_tile /*repeat*/); //Start 2D iDMA
-#else
-            flex_dma_async_2d(
-                info->Z_tile_base + info->store_m * info->Z_tile_M_iter_offset + info->store_n * info->Z_tile_N_iter_offset, /*destination*/
-                DMA_L1_Z, /*source*/
-                info->N_tile * DATA_TYPE_BYTE, /*transfer size*/
-                info->N_size * DATA_TYPE_BYTE, /*destination stride*/
-                info->N_tile * DATA_TYPE_BYTE, /*source stride*/
-                info->M_tile /*repeat*/); //Start 2D iDMA
-#endif
-            flex_dma_async_wait_all(); // Wait for iDMA Finishing
+        // store
+        if (flex_is_dm_core() && info->store_active == 1) {
+            summa_reduce_and_store_Z(info, DMA_L1_Z, true);
         }
     }
 
     flex_global_barrier_xy();
 }
-
 
 #endif //_SUMMA_GEMM_H_

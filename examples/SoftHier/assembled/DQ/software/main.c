@@ -28,8 +28,8 @@ Weight Matrix B = [B0 B1 B2 ...] vertical splits
 #define TIMER 0
 #define REDMULE_ON 1
 #define VERIFY_VALUES 0
-const int SPATZ_CORE   = 1;
-const int REDMULE_ATTACHED_CORE   = 0;//by default, redmule is always attached to core 0
+const int SPATZ_CORE            = 1;
+const int REDMULE_ATTACHED_CORE = 0; // by default, redmule is always attached to core 0
 #include "flex_cluster_arch.h"
 #include "flex_dma_pattern.h"
 #include "flex_dump.h"
@@ -43,9 +43,8 @@ const int REDMULE_ATTACHED_CORE   = 0;//by default, redmule is always attached t
 
 #include <stdio.h>
 
-
 // Tiling configuration TODO make a tilinginfo struct
-const int NUM_TILES =1;
+const int NUM_TILES = 1;
 
 int main() {
 
@@ -94,10 +93,9 @@ int main() {
     flex_global_barrier_xy();
     if (flex_get_core_id() == 0 && flex_get_cluster_id() == 0) {
         printf("\nfinished!");
-        printf("matrix_cb_fp16 address: 0x%08x (expected in HBM_WEST: 0xc0000000-0xdfffffff)\n", 
-       (uintptr_t)&matrix_cb_fp16[0]);
-       printf("matrix_scales_fp16 address: 0x%08x\n", 
-       (uintptr_t)&matrix_scales_fp16[0]);
+        printf("matrix_cb_fp16 address: 0x%08x (expected in HBM_WEST: 0xc0000000-0xdfffffff)\n",
+               (uintptr_t)&matrix_cb_fp16[0]);
+        printf("matrix_scales_fp16 address: 0x%08x\n", (uintptr_t)&matrix_scales_fp16[0]);
     }
     flex_global_barrier_xy();
     flex_eoc(eoc_val);

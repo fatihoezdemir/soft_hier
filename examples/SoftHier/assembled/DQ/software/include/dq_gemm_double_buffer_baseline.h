@@ -477,7 +477,7 @@ void dq_gemm_triple_buffer_baselineu8() {
                 g_l1_dq.W_dq          = l1_buffers.W_dq_buf[targetW];
                 // dequantize_block_tile_compactu8(/*row_start=*/0, /*rows=*/FP16_M,
                 //                               /*group_count=*/g_next, /*idx_groups_stride=*/g_next);
-                dequantize_block_tile_compact_improved(0, FP16_M, g, g);
+                dequantize_block_tile_compact_improved(0, FP16_M, g_next, g_next);
                 readyW ^= 1;
             }
 
@@ -537,6 +537,8 @@ void dq_gemm_triple_buffer_baselineu8() {
 #endif
 
         debug("[VERIFICATION] Verification complete!\n");
+        debug("[VERIFICATION] Freeing allocated buffers!\n");
+
         for (int i = 0; i < 2; ++i) {
             flex_l1_free((void*)l1_buffers.idx0_buf[i]);
             flex_l1_free((void*)l1_buffers.idx1_buf[i]);
@@ -548,7 +550,9 @@ void dq_gemm_triple_buffer_baselineu8() {
         g_l1_dq.W_dq = NULL;
         flex_l1_free((void*)g_l1_dq.cb);
         flex_l1_free((void*)g_l1_dq.scales);
+        debug("[VERIFICATION] Freeing finished!\n");
     }
+    flex_intra_cluster_sync(); // Sync all cores before exit
 }
 
 #endif

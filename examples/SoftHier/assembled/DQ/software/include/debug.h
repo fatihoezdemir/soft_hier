@@ -65,25 +65,24 @@
 #endif
 
 #if TIMER
-#define TIMER_START()                                                                               \
+#define TIMER_START()                                                                                                  \
     do {                                                                                                               \
-        flex_timer_start();                                                          \
+        flex_timer_start();                                                                                            \
     } while (0)
 #else
-#define TIMER_START()                                                                            \
+#define TIMER_START()                                                                                                  \
     do {                                                                                                               \
     } while (0)
 #endif
 #if TIMER
-#define TIMER_END()                                                                               \
+#define TIMER_END()                                                                                                    \
     do {                                                                                                               \
-        flex_timer_start();                                                          \
+        flex_timer_start();                                                                                            \
     } while (0)
 #else
-#define TIMER_END()                                                                            \
+#define TIMER_END()                                                                                                    \
     do {                                                                                                               \
     } while (0)
 #endif
-
 
 #endif

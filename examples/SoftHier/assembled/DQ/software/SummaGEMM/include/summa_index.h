@@ -1,3 +1,5 @@
+#ifndef _SUMMA_INDEX_H_
+#define _SUMMA_INDEX_H_
 #include "gemm_setup.h"
 #if GEMM_RESHA_X_FROM_ENABLE == 1
 static inline uint64_t summa_compute_reshaped_X_offset(const SummaGEMMInfo* info, int m, int n, int k) {
@@ -23,7 +25,7 @@ static inline uint64_t summa_compute_reshaped_X_offset(const SummaGEMMInfo* info
 #endif
 
 #if GEMM_RESHA_Z_TO_ENABLE == 1
-static inline uint64_t summa_compute_reshaped_Z_offset_store(const SummaGEMMInfo* info) {
+static inline uint64_t summa_compute_reshaped_Z_offset(const SummaGEMMInfo* info) {
     uint64_t origin_elem_offest = (info->Z_tile_base_offset + (uint64_t)info->store_m * info->Z_tile_M_iter_offset +
                                    (uint64_t)info->store_n * info->Z_tile_N_iter_offset) /
                                   DATA_TYPE_BYTE;
@@ -44,3 +46,5 @@ static inline uint64_t summa_compute_reshaped_Z_offset_store(const SummaGEMMInfo
     return (mapped_m * GEMM_RESHAPE_Z_TO_N + mapped_n) * DATA_TYPE_BYTE;
 }
 #endif
+
+#endif //_SUMMA_INDEX_H_

@@ -1,13 +1,17 @@
+#ifndef _SUMMA_DMA_H_
+#define _SUMMA_DMA_H_
+
 #include "flex_dma_pattern.h"
 #include "gemm_setup.h"
 
-inline void initZBuffer(const SummaGEMMInfo* info) {
+static inline void initZBuffer(const SummaGEMMInfo* info) {
     // Initialize Z buffer
     if (flex_is_dm_core()) {
         flex_dma_async_1d(info->L1_Z1, zomem(0), info->L1_Z_size);
         flex_dma_async_1d(info->L1_Z2, zomem(0), info->L1_Z_size);
         flex_dma_async_wait_all();
     }
+    flex_intra_cluster_sync();
 }
 
 static inline void summa_load_W_tile(const SummaGEMMInfo* info, uint32_t dst_L1_W, int m, int n, int k) {
@@ -47,7 +51,7 @@ static inline void summa_load_X_tile(const SummaGEMMInfo* info, uint32_t dst_L1_
     }
 }
 
-static inline void summa_reduce_and_store_Z(SummaGEMMInfo* info, uint32_t DMA_L1_Z, bool is_epilogue) {
+static inline void summa_reduce_and_store_Z(SummaGEMMInfo* info, uint32_t DMA_L1_Z, bool clear) {
     if (info->group_reduction == 1) {
         flex_dma_async_reduction(DMA_L1_Z, DMA_L1_Z, info->L1_Z_size, COLLECTIVE_REDSUM_TYPE,
                                  ~info->group.wakeup_row_mask, ~info->group.wakeup_col_mask);
@@ -67,10 +71,14 @@ static inline void summa_reduce_and_store_Z(SummaGEMMInfo* info, uint32_t DMA_L1
                       info->N_tile * DATA_TYPE_BYTE, info->M_tile);
 #endif
     flex_dma_async_wait_all();
-    if (is_epilogue) {
+    if (clear) {
         // Clear Z buffer for reuse
         flex_dma_async_1d(DMA_L1_Z, zomem(0), info->L1_Z_size);
         flex_dma_async_wait_all();
         /* code */
     }
 }
+
+static inline void vq_load_cb(SummaGEMMInfo* info) {}
+
+#endif //_SUMMA_DMA_H_

@@ -116,14 +116,25 @@ vq-download:
 		--n_size ${VQ_N}
 
 # Generate VQ data using AQLM quantizer (for custom weights)
-# This requires you to have already trained a quantizer or have weights to quantize
-vq-quantize:
-	@echo "Quantizing weights using AQLM..."
+# This generates random weights and quantizes them using AQLM
+VQ_NUM_CB ?= 2
+VQ_NBITS_PER_CB ?= 8
+VQ_GROUP_SIZE ?= 8
+VQ_MAX_EPOCHS ?= 10
+VQ_DEVICE ?= auto
+
+vq-generate:
+	@echo "Generating and quantizing weights using AQLM..."
 	@mkdir -p ${VQ_CACHE_DIR}
-	python3 ${CUR_DIR}/scripts/quantizers/aqlm_quantize.py \
-		--output_dir ${VQ_CACHE_DIR} \
-		--m_size ${VQ_M} \
-		--n_size ${VQ_N}
+	python3 ${CUR_DIR}/scripts/quantizers/aqlm_quantizer.py \
+		--k_size ${VQ_K} \
+		--n_size ${VQ_N} \
+		--num_codebooks ${VQ_NUM_CB} \
+		--nbits_per_codebook ${VQ_NBITS_PER_CB} \
+		--in_group_size ${VQ_GROUP_SIZE} \
+		--max_epochs ${VQ_MAX_EPOCHS} \
+		--device ${VQ_DEVICE} \
+		--output_dir ${VQ_CACHE_DIR}
 
 # Check VQ cache status
 vq-status:
@@ -156,8 +167,13 @@ vq-help:
 	@echo "Vector Quantization (VQ) Workflow Targets:"
 	@echo ""
 	@echo "  vq-download      Download pretrained VQ model from HuggingFace"
-	@echo "                   Variables: REPO_ID, WEIGHT_FILE, LAYER_PREFIX, VQ_M, VQ_N"
-	@echo "  vq-quantize      Quantize custom weights using AQLM"
+	@echo "                   Variables: REPO_ID, WEIGHT_FILE, LAYER_PREFIX, VQ_K, VQ_N"
+	@echo "                   Saves to: aqlm_dl{config}_dim{K}x{N}_*.npy"
+	@echo ""
+	@echo "  vq-generate      Generate and quantize random weights using AQLM"
+	@echo "                   Variables: VQ_K, VQ_N, VQ_NUM_CB, VQ_NBITS_PER_CB, VQ_GROUP_SIZE, VQ_MAX_EPOCHS, VQ_DEVICE"
+	@echo "                   Saves to: aqlm_gen{config}_dim{K}x{N}_*.npy"
+	@echo ""
 	@echo "  vq-status        Show VQ cache status"
 	@echo "  vq-clean         Clean VQ cache directory"
 	@echo ""
@@ -165,14 +181,30 @@ vq-help:
 	@echo "  gemm-vq-run      Run GEMM simulation with VQ"
 	@echo "  gemm-vq-runv     Run GEMM with VQ (verbose, with waveforms)"
 	@echo ""
+	@echo "VQ Source Selection (config/kernels/gemm.py):"
+	@echo "  self.vq_source = \"gen\"    Use generated weights (aqlm_gen* files)"
+	@echo "  self.vq_source = \"dl\"     Use downloaded weights (aqlm_dl* files)"
+	@echo ""
 	@echo "Example workflows:"
-	@echo "  1. Using cached VQ data:"
-	@echo "     make vq-status && make gemm-vq-run"
+	@echo "  1. Generate VQ data and run:"
+	@echo "     make vq-generate"
+	@echo "     # Set vq_source='gen' and vq_force_weight_load=1 in gemm.py"
+	@echo "     make gemm-vq-run"
 	@echo ""
 	@echo "  2. Download pretrained model and run:"
-	@echo "     make vq-download REPO_ID=... LAYER_PREFIX=... && make gemm-vq-run"
+	@echo "     make vq-download REPO_ID=... LAYER_PREFIX=..."
+	@echo "     # Set vq_source='dl' and vq_force_weight_load=1 in gemm.py"
+	@echo "     make gemm-vq-run"
 	@echo ""
-	@echo "Note: VQ is controlled by vq_enabled flag in config/kernels/gemm.py"
+	@echo "  3. Keep both and switch between them:"
+	@echo "     make vq-generate    # Creates aqlm_gen* files"
+	@echo "     make vq-download    # Creates aqlm_dl* files"
+	@echo "     # Toggle vq_source='gen' or 'dl' in gemm.py to switch"
+	@echo ""
+	@echo "Config Flags (config/kernels/gemm.py):"
+	@echo "  vq_enabled           = 0/1    # Enable VQ hardware support"
+	@echo "  vq_force_weight_load = 0/1    # Load VQ weights even if HW disabled"
+	@echo "  vq_source            = gen/dl # Select generated or downloaded weights"
 
 
 

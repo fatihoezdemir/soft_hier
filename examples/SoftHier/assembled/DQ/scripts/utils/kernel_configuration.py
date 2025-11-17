@@ -29,7 +29,10 @@ def generate_config_C_header(header_prefix, config, C_header_file, dtype, numeri
         for attr_name, attr_value in vars(config).items():
             # Convert attribute name to uppercase and prefix with 'ARCH_'
             define_name = f'{header_prefix.upper()}_{attr_name.upper()}'
+
             if define_name == f'{header_prefix.upper()}_DTYPE':
+                continue
+            if vq_enabled and define_name.startswith(f'{header_prefix.upper()}_VQ_'):
                 continue
             if isinstance(attr_value, str):
                 file.write(f'#define {define_name}_{attr_value.upper()}\n')
@@ -37,8 +40,11 @@ def generate_config_C_header(header_prefix, config, C_header_file, dtype, numeri
             if 'ENABLE' in define_name:
                 file.write(f'#define {define_name} {attr_value}\n')
                 continue
-            file.write(f'#define {define_name} ((uint64_t){attr_value})\n')
 
+
+
+            file.write(f'#define {define_name} ((uint64_t){attr_value})\n')
+            
         if dtype == 'fp16':
             file.write(f'#define {header_prefix.upper()}_FP16\n')
             file.write(f'#define DATA_TYPE_WIDTH             16\n')

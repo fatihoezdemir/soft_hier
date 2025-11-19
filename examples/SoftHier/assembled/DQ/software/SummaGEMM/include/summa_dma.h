@@ -15,23 +15,6 @@ static inline void initZBuffer(const SummaGEMMInfo* info) {
     flex_intra_cluster_sync();
 }
 
-static inline void summa_load_W_tile(const SummaGEMMInfo* info, uint32_t dst_L1_W, int m, int n, int k) {
-    flex_dma_async_2d(dst_L1_W, /*destination*/
-                      info->W_tile_base + m * info->W_tile_M_iter_offset + n * info->W_tile_N_iter_offset +
-                          k * info->W_tile_K_iter_offset, /*source*/
-                      info->N_tile * DATA_TYPE_BYTE,      /*transfer size*/
-                      info->N_tile * DATA_TYPE_BYTE,      /*destination stride*/
-                      info->N_size * DATA_TYPE_BYTE,      /*source stride*/
-                      info->K_tile /*repeat*/);           // Start 2D iDMA
-    flex_dma_async_wait_all();                            // Wait for iDMA Finishing
-    // col-wise multicast
-    if (info->summa_group_y > 1) {
-        flex_dma_async_broadcast(dst_L1_W /*dst_offset*/, dst_L1_W /*src_offset*/, info->L1_W_size /*transfer_size*/,
-                                 (ARCH_NUM_CLUSTER_X - 1) /*row_mask*/, info->group.wakeup_col_mask /*col_mask*/);
-        flex_dma_async_wait_all(); // Wait for iDMA Finishing
-    }
-}
-
 static inline void summa_load_X_tile(const SummaGEMMInfo* info, uint32_t dst_L1_X, int m, int n, int k) {
 #if GEMM_RESHA_X_FROM_ENABLE == 1
     uint64_t mapped_offset = summa_compute_reshaped_X_offset(info, m, n, k);
@@ -52,6 +35,22 @@ static inline void summa_load_X_tile(const SummaGEMMInfo* info, uint32_t dst_L1_
     }
 }
 
+static inline void summa_load_W_tile(const SummaGEMMInfo* info, uint32_t dst_L1_W, int m, int n, int k) {
+    flex_dma_async_2d(dst_L1_W, /*destination*/
+                      info->W_tile_base + m * info->W_tile_M_iter_offset + n * info->W_tile_N_iter_offset +
+                          k * info->W_tile_K_iter_offset, /*source*/
+                      info->N_tile * DATA_TYPE_BYTE,      /*transfer size*/
+                      info->N_tile * DATA_TYPE_BYTE,      /*destination stride*/
+                      info->N_size * DATA_TYPE_BYTE,      /*source stride*/
+                      info->K_tile /*repeat*/);           // Start 2D iDMA
+    flex_dma_async_wait_all();                            // Wait for iDMA Finishing
+    // col-wise multicast
+    if (info->summa_group_y > 1) {
+        flex_dma_async_broadcast(dst_L1_W /*dst_offset*/, dst_L1_W /*src_offset*/, info->L1_W_size /*transfer_size*/,
+                                 (ARCH_NUM_CLUSTER_X - 1) /*row_mask*/, info->group.wakeup_col_mask /*col_mask*/);
+        flex_dma_async_wait_all(); // Wait for iDMA Finishing
+    }
+}
 static inline void summa_reduce_and_store_Z(SummaGEMMInfo* info, uint32_t DMA_L1_Z, bool clear) {
     if (info->group_reduction == 1) {
         flex_dma_async_reduction(DMA_L1_Z, DMA_L1_Z, info->L1_Z_size, COLLECTIVE_REDSUM_TYPE,
@@ -81,22 +80,56 @@ static inline void summa_reduce_and_store_Z(SummaGEMMInfo* info, uint32_t DMA_L1
 }
 #if VQ_ENABLED == 1
 static inline void vq_load_cb(SummaGEMMInfo* info) {
+    // TODO Assume codebooks have the same size change with allocation later
+    for (int i = 0; i < VQ_NUM_CBS; i++){
+    flex_dma_async_1d((uint64_t)(uintptr_t)info->vq.L1_CB[i], (uint64_t)(uintptr_t)VQ_CODEBOOKS_ADDR+ i* info->vq.L1_CB_size,
+                      info->vq.L1_CB_size);
+    }
+    flex_dma_async_wait_all();
+}
 
-    flex_dma_async_1d((uint64_t)(uintptr_t) info->L1_CB[0], (uint64_t)(uintptr_t)VQ_CODEBOOKS_ADDR,
-                      info->L1_CB_size);
-
-    flex_dma_async_1d((uint64_t)(uintptr_t) info->L1_CB[1], (uint64_t)(uintptr_t)VQ_CODEBOOKS_ADDR+info->L1_CB_size,
-                      info->L1_CB_size);         
+static inline void summa_vq_load_scales(SummaGEMMInfo* info, uint32_t dst_L1_Scales, int m, int n, int k) {
+    // Calculate actual offset based on (m,n,k) tile position
+    uint64_t scale_offset = (m * info->N_iter * info->K_iter + n * info->K_iter + k) * info->vq.scale_size;
+    
+    flex_dma_async_1d(dst_L1_Scales, 
+                      info->vq.VQ_Scale_address + scale_offset, 
+                      info->vq.scale_size);  // ← NOT L1_IDX_size!
     flex_dma_async_wait_all();
 
+    flex_dma_async_broadcast(dst_L1_Scales, dst_L1_Scales, 
+                             info->vq.scale_size,  // ← Fix here too
+                             info->group.wakeup_col_mask,
+                             (ARCH_NUM_CLUSTER_X - 1));
+    flex_dma_async_wait_all();
+}
+
+// W shape: K × N  →  Indices shape: K × (N/VQ_GROUP_SIZE)
+static inline void summa_vq_load_indices(SummaGEMMInfo* info, uint32_t dst_L1_IDX, int m, int n, int k) {
+    // Compressed N dimension
+    uint32_t N_compressed = info->N_size / VQ_GROUP_SIZE;
+    uint32_t N_tile_compressed = info->N_tile / VQ_GROUP_SIZE;
+    
+    // Offset: cluster column position + k-tile offset
+    uint64_t idx_offset = (info->cluster_in_group_id_x * N_tile_compressed * VQ_IDX_BYTES) +  // column offset
+                          (k * info->K_tile * N_compressed * VQ_IDX_BYTES);                   // k offset
+    
+    flex_dma_async_2d(dst_L1_IDX, 
+                      info->vq.VQ_Index_address + idx_offset,
+                      N_tile_compressed * VQ_IDX_BYTES,      // ← transfer width (compressed row)
+                      N_compressed * VQ_IDX_BYTES,           // ← source stride (full compressed N)
+                      N_tile_compressed * VQ_IDX_BYTES,      // ← dest stride (compact)
+                      info->K_tile);                         // ← num rows (full K_tile)
+    flex_dma_async_wait_all();
+    
+    flex_dma_async_broadcast(dst_L1_IDX, dst_L1_IDX, 
+                             info->vq.L1_IDX_size,
+                             info->group.wakeup_col_mask,
+                             (ARCH_NUM_CLUSTER_X - 1));
+    flex_dma_async_wait_all();
 }
 
 
-
-
-
-
 #endif
-
 
 #endif //_SUMMA_DMA_H_

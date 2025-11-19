@@ -4,6 +4,31 @@
 #include "flex_group_barrier.h"
 #include "flex_runtime.h"
 #include "gemm.h"
+#if VQ_ENABLED == 1
+typedef struct VQ {
+    uint32_t idx_size;
+    uint32_t cb_size;
+    uint32_t scale_size;
+    uint64_t VQ_CB_address;
+    uint64_t VQ_Index_address;
+    uint64_t VQ_Scale_address;
+    // Addressing Information
+
+    // L1 location information
+    uint32_t L1_W3;               // for triple buffer
+    uint32_t L1_CB[VQ_NUM_CBS];   //
+    uint32_t L1_IDX1[VQ_NUM_CBS]; // 2 indices buffers /codebook for triple buffer
+    uint32_t L1_IDX2[VQ_NUM_CBS];
+
+    uint32_t L1_IDX_size;
+    uint32_t L1_CB_size;
+#if VQ_USE_SCALES == 1
+    uint32_t L1_Scales[2];
+#endif
+} vq;
+
+#endif
+
 typedef struct SummaGEMMInfo {
     // General information
     uint64_t X_address;
@@ -82,28 +107,7 @@ typedef struct SummaGEMMInfo {
     uint32_t L1_Z_size;
 #if VQ_ENABLED == 1
     // General information
-
-    uint32_t idx_size;
-    uint32_t cb_size;
-    uint32_t scale_size;
-    uint64_t VQ_CB_address;
-    uint64_t VQ_Index_address;
-    uint64_t VQ_Scale_address;
-    // Addressing Information
-
-    // L1 location information
-    uint32_t L1_W3; // for triple buffer
-    uint32_t L1_CB[VQ_NUM_CBS]; // for triple buffer
-    uint32_t L1_IDX0[VQ_NUM_CBS];
-    uint32_t L1_IDX1[VQ_NUM_CBS];
-
-    uint32_t L1_IDX_size;
-    uint32_t L1_CB_size;
-#if VQ_USE_SCALES ==1
-    uint32_t L1_Scales[2];
-#endif
-
-
+    vq vq;
 
 #endif
 
@@ -206,53 +210,59 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
     info.W_tile_K_iter_offset = K_tile * N_size * DATA_TYPE_BYTE;
     info.Z_tile_M_iter_offset = info.summa_group_y * M_tile * N_size * DATA_TYPE_BYTE;
     info.Z_tile_N_iter_offset = info.summa_group_x * N_tile * DATA_TYPE_BYTE;
-    uint32_t off = local(0);
-    info.L1_X1                = off; off+= info.L1_X_size;
-    info.L1_W1                = off; off+= info.L1_W_size;//
-    info.L1_Z1                = off; off+= info.L1_Z_size;//
-    info.L1_X2                = off; off+= info.L1_X_size;
-    info.L1_W2                = off; ;off+= info.L1_W_size;//
-    info.L1_Z2                = off; ;off+= info.L1_Z_size;//
-
-
+    uint32_t off              = local(0);
+    info.L1_X1                = off;
+    off += info.L1_X_size;
+    info.L1_W1 = off;
+    off += info.L1_W_size; //
+    info.L1_Z1 = off;
+    off += info.L1_Z_size; //
+    info.L1_X2 = off;
+    off += info.L1_X_size;
+    info.L1_W2 = off;
+    off += info.L1_W_size; //
+    info.L1_Z2 = off;
+    off += info.L1_Z_size; //
 
 #if VQ_ENABLED == 1
-info.VQ_CB_address = CB_address;
-info.L1_IDX_size = N_tile * K_tile /VQ_NUM_GROUPS_PER_ROW * VQ_IDX_BYTES;
-info.L1_CB_size = VQ_CB_NUM_CENTROIDS * VQ_GROUP_SIZE * VQ_CB_BYTES;
+    info.vq.VQ_CB_address = CB_address;
+    info.vq.L1_IDX_size   = N_tile * K_tile / VQ_NUM_GROUPS_PER_ROW * VQ_IDX_BYTES;
+    info.vq.L1_CB_size    = VQ_CB_NUM_CENTROIDS * VQ_GROUP_SIZE * VQ_CB_BYTES;
+    info.vq.L1_W3 = off;
+    off += info.L1_W_size; //
 
-    info.L1_W3                = off; ;off+= info.L1_W_size;//
-
-
-for (int i = 0; i < VQ_NUM_CBS; i++) {
-    info.L1_CB[i]=    off; off+= info.L1_CB_size;//+W
-
-
-}
-for (int i = 1; i < 2; i++) {// TODO prettify
-        info.L1_IDX0[0]=    off; ;off+= info.L1_IDX_size;//+W
-}
-for (int i = 1; i < 2; i++) {
-        info.L1_IDX1[0]=    off; ;off+= info.L1_IDX_size;//+W
-}
+    for (int i = 0; i < VQ_NUM_CBS; i++) {
+        info.vq.L1_CB[i] = off;
+        off += info.vq.L1_CB_size; //+W
+    }
+    for (int i = 1; i < 2; i++) { // TODO prettify
+        info.vq.L1_IDX1[i] = off;
+        off += info.vq.L1_IDX_size; //+W
+    }
+    for (int i = 1; i < 2; i++) {
+        info.vq.L1_IDX2[i] = off;
+        off += info.vq.L1_IDX_size; //+W
+    }
 #if VQ_USE_SCALES == 1
-uint32_t L1_scales_size =K_tile * VQ_CB_BYTES;
-info.L1_Scales[0]=off;off += info.L1_IDX_size;
-info.L1_Scales[1]=off;off += info.L1_IDX_size;
+    uint32_t L1_scales_size = K_tile * VQ_CB_BYTES;
+    info.vq.L1_Scales[0]    = off;
+    off += info.vq.L1_IDX_size;
+    info.vq.L1_Scales[1] = off;
+    off += info.vq.L1_IDX_size;
 #endif
-
 
     // info.VQ_CB_size     = cb_size * DATA_TYPE_BYTE;
     // info.VQ_Scale_size  = scale_size * DATA_TYPE_BYTE;
     // info.VQ_Index_size  = idx_size * DATA_TYPE_BYTE;
 #endif
-if  (flex_get_cluster_id()==1&& flex_is_dm_core()){
-// printf("\n M N K iter: %d %d %d\n", info.M_iter, info.N_iter, info.K_iter);
-// printf("\n L1 addresses %0x %0x %0x %0x %0x %0x   \n",info.L1_X1 ,info.L1_W1, info.L1_Z1, info.L1_X2, info.L1_W2, info.L1_Z2); 
-printf("\n L1 VQ addresses %0x %0x %0x %0x %0x %0x   \n",info.L1_W3  ,info.L1_CB[0], info.L1_CB[1], info.L1_X2, info.L1_W2, info.L1_Z2); 
-
-}
-    info.L1_AREA              = info.L1_Z2 + info.L1_Z_size;
+    if (flex_get_cluster_id() == 1 && flex_is_dm_core()) {
+        printf("\n M N K iter: %d %d %d\n", info.M_iter, info.N_iter, info.K_iter);
+        // printf("\n L1 addresses %0x %0x %0x %0x %0x %0x   \n",info.L1_X1 ,info.L1_W1, info.L1_Z1, info.L1_X2,
+        // info.L1_W2, info.L1_Z2);
+        // printf("\n L1 VQ addresses %0x %0x %0x %0x %0x %0x   \n", info.vq.L1_W3, info.vq.L1_CB[0], info.vq.L1_CB[1],
+        //        info.L1_X2, info.L1_W2, info.L1_Z2);
+    }
+    info.L1_AREA = info.L1_Z2 + info.L1_Z_size;
     return info;
 }
 

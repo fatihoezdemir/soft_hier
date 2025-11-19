@@ -9,6 +9,16 @@
 #include "gemm_setup.h"
 #include "summa_dma.h"
 #include "summa_index.h"
+/*
+Pipeline stages:
+┌─────────────────────────────────────────────────────────┐
+│ k-1  │ k    │ k+1  │ k+2                                │
+├─────────────────────────────────────────────────────────┤
+│ DMA  │ DMA  │ DMA  │ DMA    ← Load idx[k+2], scale[k+2] │
+│ ---  │ DEQ  │ DEQ  │ DEQ    ← Dequant idx[k+1]→W3 (RVV) │
+│ ---  │ ---  │ GEMM │ GEMM   ← Compute W1×X              │
+└─────────────────────────────────────────────────────────┘
+*/
 static inline void run_gemm_pipeline(SummaGEMMInfo* info, int m, int n, uint32_t* DMA_L1_Z, uint32_t* REDMULE_L1_Z) {
     // Prefetching PIPELINE PROLOGUE_|""
     if (flex_is_dm_core()) {
@@ -103,13 +113,10 @@ static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
             // load W from south edge
             summa_load_W_tile(info, info->L1_W1, m, n, 0);
         }
-        vq_load_cb(info);
-    }       
-    
+    }
+
     flex_global_barrier_xy();
 
-
-    
     // PIPELINE START
     // Double buffering, update pointers
     for (int k = 1; k <= info->K_iter; ++k) {
@@ -180,6 +187,8 @@ static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
 
 void SummaGEMMRun(SummaGEMMInfo* info) {
     flex_global_barrier_xy();
+    if (flex_is_dm_core()) // ignore
+        vq_load_cb(info);  // ignore
 
     if (info->cluster_active) {
         uint32_t DMA_L1_Z     = info->L1_Z2;

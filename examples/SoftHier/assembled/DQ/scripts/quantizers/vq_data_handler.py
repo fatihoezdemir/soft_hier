@@ -289,12 +289,32 @@ class VQDataHandler:
         else:
             raise ValueError(f"unsupported dtype: {dtype}")
 
+        # Split codebooks into separate arrays (one per codebook)
+        codebooks_split = []
+        num_cbs = self.codebooks.shape[0]
+        cb_size = self.codebooks[0].size
+        for i in range(num_cbs):
+            if dtype == 'fp16':
+                cb_i = self.codebooks[i].astype(np.float16).view(np.uint16)
+            else:
+                cb_i = self.codebooks[i].astype(np.float16).view(np.uint16)
+            codebooks_split.append(cb_i)
+
+        # Split indices into separate arrays (one per codebook)
+        # indices shape: (K, num_groups, num_codebooks)
+        indices_split = []
+        for i in range(num_cbs):
+            idx_i = self.indices[:, :, i].astype(np.uint8)
+            indices_split.append(idx_i)
+
         return {
             'codebooks': cb_typed,
+            'codebooks_split': codebooks_split,  # List of individual codebook arrays
             'indices_packed': idx_packed,
             'indices_cb0': idx0,
             'indices_cb1': idx1 if idx1 is not None else np.array([], dtype=np.uint8),
             'indices_flattened': idx_flat,
+            'indices_split': indices_split,  # List of individual indices arrays per codebook
             'scales': scales_typed,
             'W_reconstructed': W_typed,
         }

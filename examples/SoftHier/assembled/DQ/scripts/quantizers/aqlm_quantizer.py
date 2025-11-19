@@ -16,6 +16,7 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 AQLM_DIR = ROOT / 'third_party' / 'aqlm'
 sys.path.append(str(AQLM_DIR))
+# ----- Deterministic flags -----
 
 from src.aq import QuantizedWeight
 from aq_engine import AQEngine
@@ -85,7 +86,7 @@ def quantize_weight(k_size, n_size, num_codebooks=2, nbits_per_codebook=8,
     # create weight matrix (K x N for GEMM: X @ W where X is M x K)
     # using same init as gemm_preload.py - safe range for fp8/fp16
     g = torch.Generator(device=device).manual_seed(seed)
-    W = torch.randn(k_size, n_size, device=device, dtype=torch.float32, generator=g) * 0.1 + 0.0625
+    W = torch.randn(k_size, n_size, device=device, dtype=torch.float32, generator=g) * 0.1 + 0.0625 
     W = W.to(dtype)
     logger.info(f"Created weight matrix: {W.shape} (range: [{W.min().item():.4f}, {W.max().item():.4f}], mean: {W.mean().item():.4f}, std: {W.std().item():.4f})")
 

@@ -9,15 +9,15 @@ typedef struct VQ {
     uint32_t idx_size;
     uint32_t cb_size;
     uint32_t scale_size;
-    uint64_t VQ_CB_address;
-    uint64_t VQ_Index_address;
+    uint64_t VQ_CB_address[VQ_NUM_CBS];    // Array of codebook addresses
+    uint64_t VQ_Index_address[VQ_NUM_CBS]; // Array of indices addresses (one per codebook)
     uint64_t VQ_Scale_address;
     // Addressing Information
 
     // L1 location information
-    uint32_t L1_W3;               // for triple buffer
+
     uint32_t L1_CB[VQ_NUM_CBS];   //
-    uint32_t L1_IDX1[VQ_NUM_CBS]; // 2 indices buffers /codebook for triple buffer
+    uint32_t L1_IDX1[VQ_NUM_CBS]; // 2 indices buffers /codebook
     uint32_t L1_IDX2[VQ_NUM_CBS];
 
     uint32_t L1_IDX_size;
@@ -123,7 +123,8 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
                                uint32_t Z_address_group_gap
 #if VQ_ENABLED == 1
                                ,
-                               uint64_t CB_address, uint64_t idx_address, uint64_t scale_address, uint32_t cb_size,
+                               const uint64_t CB_addresses[VQ_NUM_CBS], const uint64_t idx_addresses[VQ_NUM_CBS],
+                               uint64_t scale_address, uint32_t cb_size,
                                uint32_t idx_size, uint32_t scale_size
 #endif
 ) {
@@ -225,30 +226,43 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
     off += info.L1_Z_size; //
 
 #if VQ_ENABLED == 1
-    info.vq.VQ_CB_address = CB_address;
-    info.vq.L1_IDX_size   = N_tile * K_tile / VQ_NUM_GROUPS_PER_ROW * VQ_IDX_BYTES;
-    info.vq.L1_CB_size    = VQ_CB_NUM_CENTROIDS * VQ_GROUP_SIZE * VQ_CB_BYTES;
-    info.vq.L1_W3 = off;
+    // Copy codebook addresses array
+    for (int i = 0; i < VQ_NUM_CBS; i++) {
+        info.vq.VQ_CB_address[i] = CB_addresses[i];
+    }
+    // Copy indices addresses array
+    for (int i = 0; i < VQ_NUM_CBS; i++) {
+        info.vq.VQ_Index_address[i] = idx_addresses[i];
+    }
+    info.vq.VQ_Scale_address      = scale_address;
+    info.vq.cb_size               = cb_size;
+    info.vq.idx_size              = idx_size;
+    info.vq.scale_size            = scale_size;
+    uint32_t N_tile_comp          = info.N_tile / VQ_GROUP_SIZE;
+    uint32_t single_cb_tile_bytes = N_tile_comp * info.K_tile * VQ_IDX_BYTES;
+    info.vq.L1_IDX_size           = VQ_NUM_CBS * single_cb_tile_bytes;
+    info.vq.L1_CB_size            = VQ_CB_NUM_CENTROIDS * VQ_GROUP_SIZE * VQ_CB_BYTES;
+
     off += info.L1_W_size; //
 
     for (int i = 0; i < VQ_NUM_CBS; i++) {
         info.vq.L1_CB[i] = off;
         off += info.vq.L1_CB_size; //+W
     }
-    for (int i = 1; i < 2; i++) { // TODO prettify
-        info.vq.L1_IDX1[i] = off;
-        off += info.vq.L1_IDX_size; //+W
-    }
-    for (int i = 1; i < 2; i++) {
-        info.vq.L1_IDX2[i] = off;
-        off += info.vq.L1_IDX_size; //+W
+    info.vq.L1_IDX1[0] = off;
+    off += info.vq.L1_IDX_size;
+    info.vq.L1_IDX2[0] = off;
+    off += info.vq.L1_IDX_size;
+    for (int i = 1; i < VQ_NUM_CBS; i++) {
+        info.vq.L1_IDX1[i] = info.vq.L1_IDX1[0];
+        info.vq.L1_IDX2[i] = info.vq.L1_IDX2[0];
     }
 #if VQ_USE_SCALES == 1
     uint32_t L1_scales_size = K_tile * VQ_CB_BYTES;
     info.vq.L1_Scales[0]    = off;
-    off += info.vq.L1_IDX_size;
+    off += L1_scales_size;
     info.vq.L1_Scales[1] = off;
-    off += info.vq.L1_IDX_size;
+    off += L1_scales_size;
 #endif
 
     // info.VQ_CB_size     = cb_size * DATA_TYPE_BYTE;
@@ -259,7 +273,7 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
         printf("\n M N K iter: %d %d %d\n", info.M_iter, info.N_iter, info.K_iter);
         // printf("\n L1 addresses %0x %0x %0x %0x %0x %0x   \n",info.L1_X1 ,info.L1_W1, info.L1_Z1, info.L1_X2,
         // info.L1_W2, info.L1_Z2);
-        // printf("\n L1 VQ addresses %0x %0x %0x %0x %0x %0x   \n", info.vq.L1_W3, info.vq.L1_CB[0], info.vq.L1_CB[1],
+        // printf("\n L1 VQ addresses %0x %0x %0x %0x %0x %0x   \n",, info.vq.L1_CB[0], info.vq.L1_CB[1],
         //        info.L1_X2, info.L1_W2, info.L1_Z2);
     }
     info.L1_AREA = info.L1_Z2 + info.L1_Z_size;

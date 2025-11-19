@@ -285,13 +285,26 @@ if __name__ == '__main__':
     Z_gaddr = W_addr + W_np.nbytes
 
     # Calculate VQ data addresses if enabled
+    VQ_codebooks_addrs = []
+    VQ_indices_addrs = []
     if vq_data is not None:
         # Place VQ data after Z_golden
-        VQ_codebooks_addr = Z_gaddr + Z_golden.nbytes
-        VQ_indices_addr = VQ_codebooks_addr + vq_data['codebooks'].nbytes
-        VQ_scales_addr = VQ_indices_addr + vq_data['indices_packed'].nbytes
-        print(f"VQ_codebooks_addr = {VQ_codebooks_addr: #x}")
-        print(f"VQ_indices_addr = {VQ_indices_addr: #x}")
+        current_addr = Z_gaddr + Z_golden.nbytes
+
+        # Allocate addresses for each codebook separately
+        num_codebooks = len(vq_data['codebooks_split'])
+        for i, cb in enumerate(vq_data['codebooks_split']):
+            VQ_codebooks_addrs.append(current_addr)
+            print(f"VQ_codebook_{i}_addr = {current_addr: #x}")
+            current_addr += cb.nbytes
+
+        # Allocate """""""" separately
+        for i, idx in enumerate(vq_data['indices_split']):
+            VQ_indices_addrs.append(current_addr)
+            print(f"VQ_indices_{i}_addr = {current_addr: #x}")
+            current_addr += idx.nbytes
+
+        VQ_scales_addr = current_addr
         print(f"VQ_scales_addr = {VQ_scales_addr: #x}")
 
     print(f"X_addr = {X_addr: #x}")
@@ -302,13 +315,26 @@ if __name__ == '__main__':
     #generate preload elf
     if gemm.summa_numer == 1:
         if vq_data is not None:
-            # Include VQ data in preload
-            pld.make_preload_elf(args.elf_path,
-                [X_np, Z_empty, W_np, Z_golden,
-                 vq_data['codebooks'], vq_data['indices_flattened'], vq_data['scales']],
-                [X_addr, Z_eaddr, W_addr, Z_gaddr,
-                 VQ_codebooks_addr, VQ_indices_addr, VQ_scales_addr])
-            print(f"Generated preload ELF with VQ data")
+            # Include VQ data in preload - store each codebook and indices separately
+            data_arrays = [X_np, Z_empty, W_np, Z_golden]
+            data_addrs = [X_addr, Z_eaddr, W_addr, Z_gaddr]
+
+            # Add each codebook separately
+            for cb in vq_data['codebooks_split']:
+                data_arrays.append(cb)
+            data_addrs.extend(VQ_codebooks_addrs)
+
+            # Add each indices array separately
+            for idx in vq_data['indices_split']:
+                data_arrays.append(idx)
+            data_addrs.extend(VQ_indices_addrs)
+
+            # Add scales
+            data_arrays.append(vq_data['scales'])
+            data_addrs.append(VQ_scales_addr)
+
+            pld.make_preload_elf(args.elf_path, data_arrays, data_addrs)
+            print(f"Generated preload ELF with VQ data ({len(vq_data['codebooks_split'])} codebooks, {len(vq_data['indices_split'])} indices arrays)")
         else:
             pld.make_preload_elf(args.elf_path,
                 [X_np,    Z_empty,  W_np,   Z_golden],
@@ -331,10 +357,25 @@ if __name__ == '__main__':
 
         # Add VQ addresses if enabled
         if vq_data is not None:
-            file.write(f'\n// VQ Data Addresses\n')
-            file.write(f'#define VQ_CODEBOOKS_ADDR ((uint64_t){VQ_codebooks_addr: #x})\n')
-            file.write(f'#define VQ_INDICES_ADDR ((uint64_t){VQ_indices_addr: #x})\n')
-            file.write(f'#define VQ_SCALES_ADDR ((uint64_t){VQ_scales_addr: #x})\n')
+            file.write(f'\n// VQ Data Addresses - Multiple Codebooks\n')
+            for i, addr in enumerate(VQ_codebooks_addrs):
+                file.write(f'#define VQ_CODEBOOK_{i}_ADDR ((uint64_t){addr: #x})\n')
+
+            # Also create an array-style definition for easy access
+            file.write(f'\n// VQ Codebook addresses as array initializer\n')
+            addrs_str = ', '.join([f'{addr:#x}' for addr in VQ_codebooks_addrs])
+            file.write(f'#define VQ_CODEBOOKS_ADDRS {{{addrs_str}}}\n')
+
+            # Add indices addresses
+            file.write(f'\n// VQ Indices Addresses - Multiple Arrays (one per codebook)\n')
+            for i, addr in enumerate(VQ_indices_addrs):
+                file.write(f'#define VQ_INDICES_{i}_ADDR ((uint64_t){addr: #x})\n')
+
+            file.write(f'\n// VQ Indices addresses as array initializer\n')
+            indices_addrs_str = ', '.join([f'{addr:#x}' for addr in VQ_indices_addrs])
+            file.write(f'#define VQ_INDICES_ADDRS {{{indices_addrs_str}}}\n')
+
+            file.write(f'\n#define VQ_SCALES_ADDR ((uint64_t){VQ_scales_addr: #x})\n')
 
         file.write('\n#endif // _GEMM_PRELOAD_H_\n')
 

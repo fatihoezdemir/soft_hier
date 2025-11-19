@@ -9,11 +9,11 @@
 // Author: Chi Zhang <chizhang@iis.ee.ethz.ch>, ETH Zurich
 // Date: 1.Oct.2025
 
-#include "SummaGEMM.h"
 #include "SummaGEMMVQ.h"
 #include "flex_dump.h"
 #include "flex_runtime.h"
 #include "gemm.h"
+#include "include/SummaGEMM.h"
 #include "preload.h"
 int main() {
     uint32_t eoc_val = 0;
@@ -34,7 +34,8 @@ int main() {
         GEMM_SUMMA_GROUP_GAP_W /*W_address_group_gap*/, GEMM_SUMMA_GROUP_GAP_Z /*Z_address_group_gap*/
 #if VQ_ENABLED == 1
         ,
-        VQ_CODEBOOKS_ADDR, VQ_INDICES_ADDR, VQ_SCALES_ADDR, VQ_CB_SIZE,
+        (uint64_t[VQ_NUM_CBS])VQ_CODEBOOKS_ADDRS, (uint64_t[VQ_NUM_CBS])VQ_INDICES_ADDRS,
+        VQ_SCALES_ADDR, VQ_CB_NUM_CENTROIDS,
         VQ_NUM_SCALES, // correct it , idx size
         VQ_NUM_SCALES  // correct it , scale size
 #endif
@@ -46,9 +47,9 @@ int main() {
         flex_timer_start();
     flex_global_barrier_xy();
 #if VQ_ENABLED == 1
-    SummaGEMMRunVQ(&info);
-#else
     SummaGEMMRun(&info);
+#else
+    SummaGEMMRunVQ(&info);
 #endif
     if (flex_get_core_id() == 0 && flex_get_cluster_id() == 0)
         flex_timer_end();

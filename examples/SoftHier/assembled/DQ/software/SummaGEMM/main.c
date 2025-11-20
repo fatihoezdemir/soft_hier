@@ -13,8 +13,14 @@
 #include "flex_dump.h"
 #include "flex_runtime.h"
 #include "gemm.h"
+#include "gemm_addresses.h"
+
+// Include data arrays for linker script workflow (if generated)
+#if __has_include("gemm_data.h")
+#include "gemm_data.h"
+#endif
+
 #include "include/SummaGEMM.h"
-#include "preload.h"
 int main() {
     uint32_t eoc_val = 0;
     flex_barrier_xy_init();
@@ -34,8 +40,8 @@ int main() {
         GEMM_SUMMA_GROUP_GAP_W /*W_address_group_gap*/, GEMM_SUMMA_GROUP_GAP_Z /*Z_address_group_gap*/
 #if VQ_ENABLED == 1
         ,
-        (uint64_t[VQ_NUM_CBS])VQ_CODEBOOKS_ADDRS, (uint64_t[VQ_NUM_CBS])VQ_INDICES_ADDRS,
-        VQ_SCALES_ADDR, VQ_CB_NUM_CENTROIDS,
+        (uint64_t[VQ_NUM_CBS])VQ_CODEBOOKS_ADDRS, (uint64_t[VQ_NUM_CBS])VQ_INDICES_ADDRS, VQ_SCALES_ADDR,
+        VQ_CB_NUM_CENTROIDS,
         VQ_NUM_SCALES, // correct it , idx size
         VQ_NUM_SCALES  // correct it , scale size
 #endif
@@ -46,6 +52,18 @@ int main() {
     if (flex_get_core_id() == 0 && flex_get_cluster_id() == 0)
         flex_timer_start();
     flex_global_barrier_xy();
+    if (flex_get_cluster_id() == 0 && flex_is_dm_core()) {
+        printf(" hbm west: %lx north: %lx east: %lx south: %lx\n", hbm_west(0, 0), hbm_north(0, 0), hbm_east(0, 0),
+               hbm_south(0, 0));
+        printf(" hbm west: %lx north: %lx east: %lx south: %lx\n", hbm_west(0, 0), hbm_north(0, 0), hbm_east(0, 0),
+               hbm_south(0, 0));
+        printf(" hbm west: %lx north: %lx east: %lx south: %lx\n", hbm_west(0, 0), hbm_north(0, 0), hbm_east(0, 0),
+               hbm_south(0, 0));
+        printf(" hbm west: %lx north: %lx east: %lx south: %lx\n", hbm_west(0, 0), hbm_north(0, 0), hbm_east(0, 0),
+               hbm_south(0, 0));
+        printf(" hbm west: %lx north: %lx east: %lx south: %lx\n", hbm_west(0, 0), hbm_north(0, 0), hbm_east(0, 0),
+               hbm_south(0, 0));
+    }
 #if VQ_ENABLED == 1
     SummaGEMMRun(&info);
 #else

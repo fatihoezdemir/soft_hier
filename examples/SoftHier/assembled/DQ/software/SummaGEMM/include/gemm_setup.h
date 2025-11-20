@@ -124,8 +124,7 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
 #if VQ_ENABLED == 1
                                ,
                                const uint64_t CB_addresses[VQ_NUM_CBS], const uint64_t idx_addresses[VQ_NUM_CBS],
-                               uint64_t scale_address, uint32_t cb_size,
-                               uint32_t idx_size, uint32_t scale_size
+                               uint64_t scale_address, uint32_t cb_size, uint32_t idx_size, uint32_t scale_size
 #endif
 ) {
     SummaGEMMInfo info;
@@ -249,6 +248,13 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
         info.vq.L1_CB[i] = off;
         off += info.vq.L1_CB_size; //+W
     }
+    // if (flex_get_cluster_id() == 1 && flex_is_dm_core()) {
+    //     printf("\n=== L1 CB Allocation Debug ===\n");
+    //     printf("L1_CB_size: %d bytes\n", info.vq.L1_CB_size);
+    //     for (int i = 0; i < VQ_NUM_CBS; i++) {
+    //         printf("L1_CB[%d] = 0x%x\n", i, info.vq.L1_CB[i]);
+    //     }
+    // }
     info.vq.L1_IDX1[0] = off;
     off += info.vq.L1_IDX_size;
     info.vq.L1_IDX2[0] = off;

@@ -1,7 +1,11 @@
 MAKEFILE_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 CUR_DIR := $(MAKEFILE_DIR)
 SH_DIR := $(realpath $(MAKEFILE_DIR)../../../..)
-
+# reprocucinility, deactivate for speedup
+# export CUBLAS_WORKSPACE_CONFIG := :4096:8
+# export OMP_NUM_THREADS := 1
+# export MKL_NUM_THREADS := 1
+# export CUDA_LAUNCH_BLOCKING := 1
 ARCH_FILE_DQ ?= $(CUR_DIR)config/arch/arch_summa.py
 ifdef arch
 	ARCH_FILE_DQ = $(realpath $(arch))
@@ -61,25 +65,54 @@ gemm-pld:
 			${CUR_DIR}/software/SummaGEMM/include/preload.h \
 			${ARCH_FILE} \
 			${GEMM_FILE}
+
+gemm-data:
+	@echo "Generating data header for GEMM (linker script-based) ..."
+	python3 ${CUR_DIR}/scripts/kernels/gemm_data_generator.py \
+			${CUR_DIR}/software/SummaGEMM/include/gemm_data.h \
+			${ARCH_FILE} \
+			${GEMM_FILE}
+
 gemm-hs:
 	@echo "Compiling SoftHier HW & software for GEMM ..."
 	cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ../../../../ hs
 
-gemm-sw:
-	@echo "Compiling SoftHier HW & software for GEMM ..."
-	cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ${SH_DIR} software
+gemm-sw:gemm-pld
+	@echo "Compiling SoftHier software for GEMM ..."
+	cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ${SH_DIR} sw
+	@echo "Running SoftHier simulation for GEMM ..."
+	pld=${CUR_DIR}/software/SummaGEMM/preload.elf cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ${SH_DIR} run
+gemm-swd:gemm-pld
+	@echo "Compiling SoftHier software for GEMM ..."
+	cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ${SH_DIR} sw
+	@echo "Running SoftHier simulation for GEMM ..."
+	pld=${CUR_DIR}/software/SummaGEMM/preload.elf cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ${SH_DIR} rund
 
+# Old preload-based workflow
 gemm-pre: gemm-clean gemm-cfg gemm-pld gemm-hs
 
 gemm-run: gemm-pre
-	@echo "SoftHier simulation for GEMM ..."
+	@echo "SoftHier simulation for GEMM (preload-based) ..."
 	pld=${CUR_DIR}/software/SummaGEMM/preload.elf make -C ${SH_DIR} run
 gemm-runv: gemm-pre
-	@echo "SoftHier simulation for GEMM ..."
+	@echo "SoftHier simulation for GEMM (preload-based) ..."
 	pld=${CUR_DIR}/software/SummaGEMM/preload.elf make -C ${SH_DIR} runv pfto
 gemm-run%: gemm-pre
-	@echo "SoftHier simulation for GEMM ..."
+	@echo "SoftHier simulation for GEMM (preload-based) ..."
 	pld=${CUR_DIR}/software/SummaGEMM/preload.elf make -C ${SH_DIR} run$*
+
+# New linker script-based workflow
+gemm-ls-pre: gemm-clean gemm-cfg gemm-data gemm-hs
+
+gemm-ls-run: gemm-ls-pre
+	@echo "SoftHier simulation for GEMM (linker script-based) ..."
+	make -C ${SH_DIR} run
+gemm-ls-runv: gemm-ls-pre
+	@echo "SoftHier simulation for GEMM (linker script-based) ..."
+	make -C ${SH_DIR} runv pfto
+gemm-ls-run%: gemm-ls-pre
+	@echo "SoftHier simulation for GEMM (linker script-based) ..."
+	make -C ${SH_DIR} run$*
 
 gemm-num:
 	@echo "Numerical check for GEMM ..."
@@ -87,7 +120,13 @@ gemm-num:
 
 gemm-clean:
 	@echo "clean up intermidiate files generated for GEMM ..."
-	rm -f ${CUR_DIR}/software/SummaGEMM/include/gemm.h ${CUR_DIR}/software/SummaGEMM/preload.elf ${CUR_DIR}/software/SummaGEMM/preload.dump ${CUR_DIR}/software/SummaGEMM/include/preload.h ${SH_DIR}/dump_*
+	rm -f ${CUR_DIR}/software/SummaGEMM/include/gemm.h \
+	      ${CUR_DIR}/software/SummaGEMM/preload.elf \
+	      ${CUR_DIR}/software/SummaGEMM/preload.dump \
+	      ${CUR_DIR}/software/SummaGEMM/include/preload.h \
+	      ${CUR_DIR}/software/SummaGEMM/include/gemm_data.h \
+	      ${CUR_DIR}/software/SummaGEMM/include/gemm_addresses.h \
+	      ${SH_DIR}/dump_*
 
 # ============================================================================
 # VQ (Vector Quantization) Workflow Targets
@@ -120,7 +159,7 @@ vq-download:
 VQ_NUM_CB ?= 2
 VQ_NBITS_PER_CB ?= 8
 VQ_GROUP_SIZE ?= 8
-VQ_MAX_EPOCHS ?= 10
+VQ_MAX_EPOCHS ?= 20
 VQ_DEVICE ?= auto
 
 vq-generate:
@@ -206,6 +245,77 @@ vq-help:
 	@echo "  vq_force_weight_load = 0/1    # Load VQ weights even if HW disabled"
 	@echo "  vq_source            = gen/dl # Select generated or downloaded weights"
 
+# ============================================================================
+# VQ Debugging Targets
+# ============================================================================
+
+# Quick debug commands using the debug toolkit
+vq-debug-summary:
+	@echo "VQ Data Summary:"
+	./scripts/quick_debug.sh summary
+
+vq-debug-cb:
+	@echo "Inspecting Codebooks:"
+	./scripts/quick_debug.sh cb
+
+vq-debug-idx:
+	@echo "Inspecting Indices:"
+	./scripts/quick_debug.sh idx
+
+vq-debug-compare:
+	@echo "Comparing W_orig vs W_hat:"
+	./scripts/quick_debug.sh compare
+
+# Manual dequantization (specify ROW and GROUP)
+# Usage: make vq-debug-dq ROW=0 GROUP=0
+ROW ?= 0
+GROUP ?= 0
+vq-debug-dq:
+	@echo "Manual dequantization for Row $(ROW), Group $(GROUP):"
+	./scripts/quick_debug.sh dq $(ROW) $(GROUP)
+
+# Full debug workflow - run this to verify VQ data after generation
+vq-debug-full:
+	@echo "=== VQ Full Debug Workflow ==="
+	@echo ""
+	@echo "1. Summary:"
+	@./scripts/quick_debug.sh summary
+	@echo ""
+	@echo "2. Codebook 0 (first 5 centroids):"
+	@./scripts/quick_debug.sh cb 0
+	@echo ""
+	@echo "3. Indices Row 0 (first 10 groups):"
+	@./scripts/quick_debug.sh idx 0
+	@echo ""
+	@echo "4. Scales (first 10 rows):"
+	@./scripts/quick_debug.sh scales 10
+	@echo ""
+	@echo "5. Manual dequantization (row 0, group 0):"
+	@./scripts/quick_debug.sh dq 0 0
+	@echo ""
+	@echo "6. Comparison W_orig vs W_hat:"
+	@./scripts/quick_debug.sh compare
+	@echo ""
+	@echo "=== Debug Complete ==="
+
+# Help for debugging targets
+vq-debug-help:
+	@echo "VQ Debugging Targets:"
+	@echo ""
+	@echo "  vq-debug-summary     Show VQ data summary"
+	@echo "  vq-debug-cb          Inspect codebooks"
+	@echo "  vq-debug-idx         Inspect indices"
+	@echo "  vq-debug-compare     Compare W_orig vs W_hat"
+	@echo "  vq-debug-dq          Manual dequantization (set ROW= and GROUP=)"
+	@echo "  vq-debug-full        Run complete debug workflow"
+	@echo ""
+	@echo "Examples:"
+	@echo "  make vq-debug-summary"
+	@echo "  make vq-debug-dq ROW=5 GROUP=10"
+	@echo "  make vq-debug-full"
+	@echo ""
+	@echo "For more options, run: ./scripts/quick_debug.sh help"
+	@echo "Full guide: cat DEBUG_GUIDE.md"
 
 
 # Clang-tidy targets

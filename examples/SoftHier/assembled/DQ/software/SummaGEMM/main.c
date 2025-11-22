@@ -92,8 +92,7 @@ int main() {
     }
     flex_global_barrier_xy();
     if (flex_get_cluster_id() == 0 && flex_is_dm_core()) {
-        printf(" hbm west: %lx north: %lx east: %lx south: %lx\n", hbm_west(0, 0), hbm_north(0, 0), hbm_east(0, 0),
-               hbm_south(0, 0));
+        printf(" \n\n FINISHED\n\n");
     }
     /**************************************/
     /*  Program Execution Region -- Stop  */

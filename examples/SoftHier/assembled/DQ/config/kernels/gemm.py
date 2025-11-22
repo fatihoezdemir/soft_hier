@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #8192+2*128+6*(128**2+128*256)+3/4*256*128s
+#tryout
 
 # Author: Chi Zhang <chizhang@ethz.ch>
 
@@ -20,6 +21,37 @@
 #   |-----|   |-----|      |-----|
 # M |  X  | x |  W  | K => |  Z  | M
 #   |-----|   |-----|      |-----|
+"""
+X Matrix (M×K) - Distributed by ROWS:
+     k0    k1    k2   ← K dimension partitions
+  ┌─────┬─────┬─────┐
+m0│ X00 │ X01 │ X02 │ ← Row 0 clusters
+  ├─────┼─────┼─────┤
+m1│ X10 │ X11 │ X12 │ ← Row 1 clusters
+  ├─────┼─────┼─────┤
+m2│ X20 │ X21 │ X22 │ ← Row 2 clusters
+  └─────┴─────┴─────┘
+
+W Matrix (K×N) - Distributed by COLUMNS:
+     n0    n1    n2   ← N dimension partitions
+  ┌─────┬─────┬─────┐
+k0│ W00 │ W01 │ W02 │ ← K partition 0
+  ├─────┼─────┼─────┤
+k1│ W10 │ W11 │ W12 │ ← K partition 1
+  ├─────┼─────┼─────┤
+k2│ W20 │ W21 │ W22 │ ← K partition 2
+  └─────┴─────┴─────┘
+
+Z Matrix (M×N) - Each cluster computes ONE tile:
+     n0    n1    n2
+  ┌─────┬─────┬─────┐
+m0│ Z00 │ Z01 │ Z02 │
+  ├─────┼─────┼─────┤
+m1│ Z10 │ Z11 │ Z12 │
+  ├─────┼─────┼─────┤
+m2│ Z20 │ Z21 │ Z22 │
+  └─────┴─────┴─────┘
+"""
 
 class SummaGEMM:
 

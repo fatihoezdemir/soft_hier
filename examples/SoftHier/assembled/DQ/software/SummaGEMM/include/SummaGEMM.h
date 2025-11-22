@@ -18,7 +18,7 @@
      │X20→→│→→→→→│→→→→→│  Row 2 broadcasts X20
      └─────┴─────┴─────┘
        ↑     ↑     ↑
-       W00   W01   W02    (Column broadcasts:indices or weights)
+       W00   W01   W02    (Column broadcasts:indices+scales or weights)
        ↑     ↑     ↑
 */
 static inline void run_gemm_pipeline(SummaGEMMInfo* info, int m, int n, uint32_t* DMA_L1_Z, uint32_t* REDMULE_L1_Z) {
@@ -105,12 +105,11 @@ static inline void run_gemm_pipeline(SummaGEMMInfo* info, int m, int n, uint32_t
 
 static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32_t* DMA_L1_Z, uint32_t* REDMULE_L1_Z) {
     const int tiles      = info->K_iter;
-    const int SPATZ_CORE = 1;
+    const int SPATZ_CORE = 2;
     uint32_t core_id     = flex_get_core_id();
     if (tiles > 0) {
-        uint32_t x_buffers[2]   = {info->L1_X1, info->L1_X2};
-        uint32_t w_buffers[2]   = {info->L1_W1, info->L1_W2};
-        uint32_t idx_buffers[2] = {info->vq.L1_IDX1[0], info->vq.L1_IDX2[0]};
+        uint32_t x_buffers[2] = {info->L1_X1, info->L1_X2};
+        uint32_t w_buffers[2] = {info->L1_W1, info->L1_W2};
 #if VQ_USE_SCALES == 1
         uint32_t scale_buffers[2] = {info->vq.L1_Scales[0], info->vq.L1_Scales[1]};
 #else
@@ -118,21 +117,23 @@ static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
 #endif
         /*
         Pipeline Prologue:
-        ┌───────────────────────────────────────────────────────────────┐
-        │             k-2                      │ k-1                    │
-        ├───────────────────────────────────────────────────────────────┤
-        │DMA      │ codebook,idx[0],scale s[0] │ idx[1] ,s[1],X[0]      │
-        │SPATZ    │ ---                        │ W[0]=DQ(idx[0],s[0])   │
-        │REDMULE  │ ---                        │  ---                   │
-        └───────────────────────────────────────────────────────────────┘
+        ┌──────────────────────────────────────────────────────┐
+        │             k-2             │ k-1                    │
+        ├──────────────────────────────────────────────────────┤
+        │DMA      │idx[0],scale s[0]  │ idx[1] ,s[1],X[0]      │
+        │SPATZ    │ ---               │ W[0]=DQ(idx[0],s[0])   │
+        │REDMULE  │ ---               │  ---                   │
+        └──────────────────────────────────────────────────────┘
         */
         // Prologue P0: DMA only (indices + scales)
         if (flex_is_dm_core() && info->cluster_for_colwise == 1) {
-            summa_vq_load_indices(info, idx_buffers[0], m, n, 0);
+            summa_vq_load_indices(info, 0, m, n, 0);
+
 #if VQ_USE_SCALES == 1
             summa_vq_load_scales(info, scale_buffers[0], m, n, 0);
 #endif
         }
+
         flex_intra_cluster_sync();
 
         // Prologue P1: overlap DMA for X/next indices with RVV dequantization
@@ -141,13 +142,14 @@ static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
                 summa_load_X_tile(info, x_buffers[0], m, n, 0);
             }
             if (info->cluster_for_colwise == 1 && tiles > 1) {
-                summa_vq_load_indices(info, idx_buffers[1], m, n, 1);
+                summa_vq_load_indices(info, 1, m, n, 1);
+
 #if VQ_USE_SCALES == 1
                 summa_vq_load_scales(info, scale_buffers[1], m, n, 1);
 #endif
             }
         } else if (core_id == SPATZ_CORE) {
-            summa_vq_dequantize_tile(info, w_buffers[0], idx_buffers[0], scale_buffers[0], 0);
+            summa_vq_dequantize_tile(info, w_buffers[0], 0, scale_buffers[0], 0);
         }
         flex_intra_cluster_sync();
         flex_global_barrier_xy();
@@ -165,7 +167,7 @@ static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
         │REDMULE  │ Z[0]=X[0] * W[0]           │  Z[1]=X[1] * W[1]      │
         └───────────────────────────────────────────────────────────────┘
         */
-        for (int tile = 0; tile < tiles; ++tile) {
+        for (int tile = 0; tile < tiles /*TODO tiles*/; ++tile) {
             uint32_t redmule_x = x_buffers[tile & 0x1];
             uint32_t redmule_w = w_buffers[tile & 0x1];
 
@@ -181,10 +183,10 @@ static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
                     ++next_x_tile;
                 }
                 if (info->cluster_for_colwise == 1 && next_idx_tile < tiles) {
-                    uint32_t dst_idx = idx_buffers[next_idx_tile & 0x1];
-                    summa_vq_load_indices(info, dst_idx, m, n, next_idx_tile);
+                    int buffer_idx = next_idx_tile & 0x1;
+                    summa_vq_load_indices(info, buffer_idx, m, n, next_idx_tile);
 #if VQ_USE_SCALES == 1
-                    uint32_t dst_scale = scale_buffers[next_idx_tile & 0x1];
+                    uint32_t dst_scale = scale_buffers[buffer_idx];
                     summa_vq_load_scales(info, dst_scale, m, n, next_idx_tile);
 #endif
                     ++next_idx_tile;
@@ -205,9 +207,9 @@ static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
             } else {
                 if (next_deq_tile < tiles && core_id == SPATZ_CORE) {
                     uint32_t dst_w     = w_buffers[next_deq_tile & 0x1];
-                    uint32_t src_idx   = idx_buffers[next_deq_tile & 0x1];
-                    uint32_t src_scale = scale_buffers[next_deq_tile & 0x1];
-                    summa_vq_dequantize_tile(info, dst_w, src_idx, src_scale, next_deq_tile);
+                    int buffer_idx     = next_deq_tile & 0x1;
+                    uint32_t src_scale = scale_buffers[buffer_idx];
+                    summa_vq_dequantize_tile(info, dst_w, buffer_idx, src_scale, next_deq_tile);
                     ++next_deq_tile;
                 }
             }
@@ -246,37 +248,37 @@ void SummaGEMMRun(SummaGEMMInfo* info) {
     flex_global_barrier_xy();
 
     // Load VQ codebooks - all cores must call this for proper synchronization
-  if (info->cluster_for_colwise == 1){
-    vq_load_cb(info);
-  }
+    if (info->cluster_for_colwise == 1) {
+        vq_load_cb(info);
+    }
     flex_global_barrier_xy();
 
-    if (flex_get_cluster_id() == 15 && flex_is_dm_core()) {
-        printf("\n=== VQ Codebook Load Complete ===\n Cluster 15 VQ Codebooks:\n");
-        for (int i = 0; i < VQ_NUM_CBS; ++i) {
-            const uint16_t* cb_ptr = (const uint16_t*)(uintptr_t)info->vq.L1_CB[i];
-            VQ_PRINT_CB(cb_ptr, VQ_CB_NUM_CENTROIDS, VQ_GROUP_SIZE, i, 4);
-        }
-    }
+    // if (flex_get_cluster_id() == 4 && flex_is_dm_core()) {
+    //     printf("\n=== VQ Codebook Load Complete ===\n Cluster 15 VQ Codebooks:\n");
+    //     for (int i = 0; i < VQ_NUM_CBS; ++i) {
+    //         const uint16_t* cb_ptr = (const uint16_t*)(uintptr_t)info->vq.L1_CB[i];
+    //         VQ_PRINT_CB(cb_ptr, VQ_CB_NUM_CENTROIDS, VQ_GROUP_SIZE, i, 4);
+    //     }
+    // }
 
     if (info->cluster_active) {
         if (flex_is_dm_core())
             printf("%d\t", flex_get_cluster_id());
-            uint32_t DMA_L1_Z     = info->L1_Z2;
-            uint32_t REDMULE_L1_Z = info->L1_Z1;
-            initZBuffer(info);
+        uint32_t DMA_L1_Z     = info->L1_Z2;
+        uint32_t REDMULE_L1_Z = info->L1_Z1;
+        initZBuffer(info);
 
-            for (int m = 0; m < info->M_iter; ++m) {
-                for (int n = 0; n < info->N_iter; ++n) {
+        for (int m = 0; m < info->M_iter; ++m) {
+            for (int n = 0; n < info->N_iter; ++n) {
 
-                    run_gemm_pipelinevq(info, m, n, &DMA_L1_Z, &REDMULE_L1_Z);
-                }
+                run_gemm_pipelinevq(info, m, n, &DMA_L1_Z, &REDMULE_L1_Z);
             }
-            // store
-            if (flex_is_dm_core() && info->store_active == 1) {
-                summa_reduce_and_store_Z(info, DMA_L1_Z, false);
-            }
-            flex_global_barrier_xy();
+        }
+        // store
+        if (flex_is_dm_core() && info->store_active == 1) {
+            summa_reduce_and_store_Z(info, DMA_L1_Z, false);
+        }
+        flex_global_barrier_xy();
     }
 }
 #endif //_SUMMA_GEMM_H_

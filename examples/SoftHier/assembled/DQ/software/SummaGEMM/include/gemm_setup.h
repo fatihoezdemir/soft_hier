@@ -25,6 +25,9 @@ typedef struct VQ {
 #if VQ_USE_SCALES == 1
     uint32_t L1_Scales[2];
 #endif
+    // Pre-computed constants to avoid recomputation during load
+    uint32_t N_compressed;      // N_size / VQ_GROUP_SIZE
+    uint32_t N_tile_compressed; // N_tile / VQ_GROUP_SIZE
 } vq;
 
 #endif
@@ -233,13 +236,17 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
     for (int i = 0; i < VQ_NUM_CBS; i++) {
         info.vq.VQ_Index_address[i] = idx_addresses[i];
     }
-    info.vq.VQ_Scale_address      = scale_address;
-    info.vq.cb_size               = cb_size;
-    info.vq.idx_size              = idx_size;
-    info.vq.scale_size            = scale_size;
-    uint32_t N_tile_comp          = info.N_tile / VQ_GROUP_SIZE;
-    uint32_t single_cb_tile_bytes = N_tile_comp * info.K_tile * VQ_IDX_BYTES;
-    info.vq.L1_IDX_size           = VQ_NUM_CBS * single_cb_tile_bytes;
+    info.vq.VQ_Scale_address = scale_address;
+    info.vq.cb_size          = cb_size;
+    info.vq.idx_size         = idx_size;
+    info.vq.scale_size       = scale_size;
+
+    // Pre-compute constants to avoid recomputation during loads
+    info.vq.N_compressed      = info.N_size / VQ_GROUP_SIZE;
+    info.vq.N_tile_compressed = info.N_tile / VQ_GROUP_SIZE;
+
+    uint32_t single_cb_tile_bytes = info.vq.N_tile_compressed * info.K_tile * VQ_IDX_BYTES;
+    info.vq.L1_IDX_size           = single_cb_tile_bytes; // Size per codebook (not total)
     info.vq.L1_CB_size            = VQ_CB_NUM_CENTROIDS * VQ_GROUP_SIZE * VQ_CB_BYTES;
 
     off += info.L1_W_size; //
@@ -248,20 +255,15 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
         info.vq.L1_CB[i] = off;
         off += info.vq.L1_CB_size; //+W
     }
-    // if (flex_get_cluster_id() == 1 && flex_is_dm_core()) {
-    //     printf("\n=== L1 CB Allocation Debug ===\n");
-    //     printf("L1_CB_size: %d bytes\n", info.vq.L1_CB_size);
-    //     for (int i = 0; i < VQ_NUM_CBS; i++) {
-    //         printf("L1_CB[%d] = 0x%x\n", i, info.vq.L1_CB[i]);
-    //     }
-    // }
-    info.vq.L1_IDX1[0] = off;
-    off += info.vq.L1_IDX_size;
-    info.vq.L1_IDX2[0] = off;
-    off += info.vq.L1_IDX_size;
-    for (int i = 1; i < VQ_NUM_CBS; i++) {
-        info.vq.L1_IDX1[i] = info.vq.L1_IDX1[0];
-        info.vq.L1_IDX2[i] = info.vq.L1_IDX2[0];
+
+    // Allocate separate double buffers per codebook (2N buffers total)
+    for (int i = 0; i < VQ_NUM_CBS; i++) {
+        info.vq.L1_IDX1[i] = off;
+        off += single_cb_tile_bytes;
+    }
+    for (int i = 0; i < VQ_NUM_CBS; i++) {
+        info.vq.L1_IDX2[i] = off;
+        off += single_cb_tile_bytes;
     }
 #if VQ_USE_SCALES == 1
     uint32_t L1_scales_size = K_tile * VQ_CB_BYTES;

@@ -292,12 +292,16 @@ class VQDataHandler:
         # Split codebooks into separate arrays (one per codebook)
         codebooks_split = []
         num_cbs = self.codebooks.shape[0]
-        cb_size = self.codebooks[0].size
+        print(f"DEBUG: Splitting {num_cbs} codebooks")
+        print(f"DEBUG: Codebooks shape: {self.codebooks.shape}")
+        print(f"DEBUG: Codebook[0] shape: {self.codebooks[0].shape}, min={self.codebooks[0].min():.4f}, max={self.codebooks[0].max():.4f}")
+
         for i in range(num_cbs):
             if dtype == 'fp16':
                 cb_i = self.codebooks[i].astype(np.float16).view(np.uint16)
             else:
                 cb_i = self.codebooks[i].astype(np.float16).view(np.uint16)
+            print(f"DEBUG: CB[{i}] output shape: {cb_i.shape}, nbytes: {cb_i.nbytes}")
             codebooks_split.append(cb_i)
 
         # Split indices into separate arrays (one per codebook)

@@ -154,8 +154,7 @@ static inline void summa_vq_load_indices(SummaGEMMInfo* info, int buffer_idx, in
     flex_dma_async_wait_all();
 }
 
-// Dequantize a tile using multi-codebook indices from separate L1 buffers
-// buffer_idx: 0 or 1 for double buffering (selects L1_IDX1[*] or L1_IDX2[*])
+
 static inline void summa_vq_dequantize_tile(const SummaGEMMInfo* info, uint32_t dst_L1_W, int buffer_idx,
                                             uint32_t src_L1_Scales, int k_tile) {
 
@@ -207,30 +206,28 @@ static inline void summa_vq_dequantize_tile(const SummaGEMMInfo* info, uint32_t 
             const uint32_t payload_elems = groups_this_iter * VQ_GROUP_SIZE;
             uint16_t* out_ptr            = W_out_row + group_offset * VQ_GROUP_SIZE;
 
-
-asm volatile(
-    "vsetvli   zero, %4, e8,  m1, ta, ma\n"
-    "vle8.v    v0, (%0)\n"
-    "vle8.v    v1, (%1)\n"
-    "vsetvli   zero, %5, e16, m8, ta, ma\n"
-    "mv        t0, %2\n"
-    ".word     %6\n"
-    "vfmul.vf  v24, v8, fa0\n"
-    "mv        t1, %3\n"
-    ".word     %7\n"
-    "vfmacc.vf v24, fa0, v16\n"
-    "vse16.v   v24, (%8)\n"
-    :
-    : "r"(idx_cb0_row + group_offset),   // %0
-      "r"(idx_cb1_row + group_offset),   // %1
-      "r"(cb0_base),                     // %2
-      "r"(cb1_base),                     // %3
-      "r"(groups_this_iter),             // %4
-      "r"(payload_elems),                // %5
-      "i"(VLBLK1EI8_V(RVV_V8,  RVV_V0, RVX_T0, 1)),  // %6
-      "i"(VLBLK1EI8_V(RVV_V16, RVV_V1, RVX_T1, 1)),  // %7
-      "r"(out_ptr)                       // %8
-    : "t0", "t1", "v0", "v1", "v8", "v16", "v24", "memory");
+            asm volatile("vsetvli   zero, %4, e8,  m1, ta, ma\n"
+                         "vle8.v    v0, (%0)\n"
+                         "vle8.v    v1, (%1)\n"
+                         "vsetvli   zero, %5, e16, m8, ta, ma\n"
+                         "mv        t0, %2\n"
+                         ".word     %6\n"
+                         "vfmul.vf  v24, v8, fa0\n"
+                         "mv        t1, %3\n"
+                         ".word     %7\n"
+                         "vfmacc.vf v24, fa0, v16\n"
+                         "vse16.v   v24, (%8)\n"
+                         :
+                         : "r"(idx_cb0_row + group_offset),              // %0
+                           "r"(idx_cb1_row + group_offset),              // %1
+                           "r"(cb0_base),                                // %2
+                           "r"(cb1_base),                                // %3
+                           "r"(groups_this_iter),                        // %4
+                           "r"(payload_elems),                           // %5
+                           "i"(VLBLK1EI8_V(RVV_V8, RVV_V0, RVX_T0, 1)),  // %6
+                           "i"(VLBLK1EI8_V(RVV_V16, RVV_V1, RVX_T1, 1)), // %7
+                           "r"(out_ptr)                                  // %8
+                         : "t0", "t1", "v0", "v1", "v8", "v16", "v24", "memory");
 
             group_offset += groups_this_iter;
             remaining_groups -= groups_this_iter;

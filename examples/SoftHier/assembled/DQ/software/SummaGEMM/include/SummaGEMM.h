@@ -149,10 +149,16 @@ static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
 #endif
             }
         } else if (core_id == SPATZ_CORE) {
+            if (flex_get_cluster_id() == 0)
+                flex_timer_start();
             summa_vq_dequantize_tile(info, w_buffers[0], 0, scale_buffers[0], 0);
+            if (flex_get_cluster_id() == 0)
+                flex_timer_end();
         }
-        flex_intra_cluster_sync();
-        flex_global_barrier_xy();
+        // flex_intra_cluster_sync();
+
+
+        // flex_global_barrier_xy();
 
         int next_x_tile   = 1;
         int next_idx_tile = (tiles > 1) ? 2 : tiles;
@@ -172,9 +178,9 @@ static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
             uint32_t redmule_w = w_buffers[tile & 0x1];
 
             grid_sync_group_barrier_xy(&(info->group));
-            if (flex_is_first_core())
-                flex_redmule_wait();
-            flex_intra_cluster_sync();
+            // if (flex_is_first_core())
+            //     flex_redmule_wait();
+            // flex_intra_cluster_sync();
 
             if (flex_is_dm_core()) {
                 if (info->cluster_for_rowwise == 1 && next_x_tile < tiles) {
@@ -209,17 +215,25 @@ static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
                     uint32_t dst_w     = w_buffers[next_deq_tile & 0x1];
                     int buffer_idx     = next_deq_tile & 0x1;
                     uint32_t src_scale = scale_buffers[buffer_idx];
+                    if (flex_get_cluster_id() == 0)
+                        flex_timer_start();
                     summa_vq_dequantize_tile(info, dst_w, buffer_idx, src_scale, next_deq_tile);
+                    if (flex_get_cluster_id() == 0)
+                        flex_timer_end();
                     ++next_deq_tile;
                 }
             }
 
-            flex_intra_cluster_sync();
+            // flex_intra_cluster_sync();
 
             if (flex_is_first_core()) {
                 flex_redmule_config(info->M_tile, info->K_tile, info->N_tile);
                 flex_redmule_trigger(redmule_x, redmule_w, *REDMULE_L1_Z, REDMULE_COMPUTE_TYPE);
+                            // if (flex_is_first_core())
+                flex_redmule_wait();
             }
+        flex_intra_cluster_sync();
+
         }
     } else {
         flex_global_barrier_xy();
@@ -266,6 +280,7 @@ void SummaGEMMRun(SummaGEMMInfo* info) {
             printf("%d\t", flex_get_cluster_id());
         uint32_t DMA_L1_Z     = info->L1_Z2;
         uint32_t REDMULE_L1_Z = info->L1_Z1;
+
         initZBuffer(info);
 
         for (int m = 0; m < info->M_iter; ++m) {

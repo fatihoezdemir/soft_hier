@@ -32,6 +32,15 @@ typedef struct VQ {
 
 #endif
 
+static inline void summa_config_assert(uint32_t condition, uint32_t eoc_code) {
+    if (!condition) {
+        printf("exitin");
+        flex_eoc(eoc_code);
+        while (1) {
+        }
+    }
+}
+
 typedef struct SummaGEMMInfo {
     // General information
     uint64_t X_address;
@@ -147,6 +156,31 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
     info.summa_group_x   = group_x;
     info.summa_group_y   = group_y;
     info.summa_groups    = num_group;
+    summa_config_assert(group_x > 0 && group_y > 0, 0xE001);
+    summa_config_assert(num_group > 0, 0xE002);
+
+    const uint32_t m_block = group_y * M_tile;
+    const uint32_t n_block = group_x * N_tile;
+
+    summa_config_assert((M_size % m_block) == 0, 0xE003);
+    if (group_splitN) {
+        summa_config_assert((N_size % num_group) == 0, 0xE004);
+        summa_config_assert(((N_size / num_group) % n_block) == 0, 0xE005);
+    } else {
+        summa_config_assert((N_size % n_block) == 0, 0xE006);
+    }
+
+    if (group_splitK) {
+        summa_config_assert((group_splitK * num_group) != 0, 0xE007);
+        summa_config_assert((K_size % (num_group * group_splitK)) == 0, 0xE008);
+        const uint32_t k_chunk = K_size / (num_group * group_splitK);
+        summa_config_assert((k_chunk % K_tile) == 0, 0xE009);
+    } else {
+        summa_config_assert((K_size % K_tile) == 0, 0xE00A);
+    }
+#if VQ_ENABLED == 1
+    summa_config_assert((N_tile % VQ_GROUP_SIZE) == 0, 0xE00B);
+#endif
 
     // Group infomation
     FlexPosition pos           = get_pos(flex_get_cluster_id());
@@ -236,10 +270,12 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
     for (int i = 0; i < VQ_NUM_CBS; i++) {
         info.vq.VQ_Index_address[i] = idx_addresses[i];
     }
-    info.vq.VQ_Scale_address = scale_address;
-    info.vq.cb_size          = cb_size;
-    info.vq.idx_size         = idx_size;
-    info.vq.scale_size       = scale_size;
+    info.vq.VQ_Scale_address            = scale_address;
+    info.vq.cb_size                     = cb_size;
+    info.vq.idx_size                    = idx_size;
+    const uint32_t expected_scale_bytes = info.K_tile * VQ_CB_BYTES;
+    // summa_config_assert(scale_size == expected_scale_bytes, 0xE00C);
+    info.vq.scale_size = info.K_tile * VQ_CB_BYTES;
 
     // Pre-compute constants to avoid recomputation during loads
     info.vq.N_compressed      = info.N_size / VQ_GROUP_SIZE;

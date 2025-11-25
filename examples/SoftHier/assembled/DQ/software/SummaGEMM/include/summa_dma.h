@@ -154,7 +154,6 @@ static inline void summa_vq_load_indices(SummaGEMMInfo* info, int buffer_idx, in
     flex_dma_async_wait_all();
 }
 
-
 static inline void summa_vq_dequantize_tile(const SummaGEMMInfo* info, uint32_t dst_L1_W, int buffer_idx,
                                             uint32_t src_L1_Scales, int k_tile) {
 
@@ -181,8 +180,7 @@ static inline void summa_vq_dequantize_tile(const SummaGEMMInfo* info, uint32_t 
         // Load scale for this row (1 scale per K-dimension row)
 #if VQ_USE_SCALES == 1
         const uint16_t* scale_ptr = &scales[r];
-        asm volatile("flw fa0, (%0)" ::"r"(scale_ptr) : "fa0", "memory");
-        //     asm volatile("fmv.x.w %0, fa0" : "=r"(scale_bits));
+        asm volatile("flh fa0, (%0)" ::"r"(scale_ptr) : "fa0", "memory");
 
 #else
         asm volatile("fmv.h.x fa0, %0" ::"r"(0x3C00u) : "fa0"); // 1.0 in fp16

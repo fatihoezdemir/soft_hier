@@ -26,8 +26,10 @@ typedef struct VQ {
     uint32_t L1_Scales[2];
 #endif
     // Pre-computed constants to avoid recomputation during load
-    uint32_t N_compressed;      // N_size / VQ_GROUP_SIZE
-    uint32_t N_tile_compressed; // N_tile / VQ_GROUP_SIZE
+    uint32_t N_compressed;              // N_size / VQ_GROUP_SIZE (full stride)
+    uint32_t N_tile_compressed;         // N_tile / VQ_GROUP_SIZE
+    uint32_t N_compressed_per_group;    // (N_size_per_group) / VQ_GROUP_SIZE
+    uint32_t N_group_offset_compressed; // group_n_offset / VQ_GROUP_SIZE
 } vq;
 
 #endif
@@ -48,6 +50,7 @@ typedef struct SummaGEMMInfo {
     uint64_t Z_address;
     uint32_t M_size;
     uint32_t N_size;
+    uint32_t N_size_per_group;
     uint32_t K_size; /*shared dimension*/
     uint32_t M_tile;
     uint32_t N_tile;
@@ -55,6 +58,7 @@ typedef struct SummaGEMMInfo {
     uint32_t group_reduction;
     uint32_t group_splitK;
     uint32_t group_splitN;
+    uint32_t group_n_offset;
     uint32_t summa_group_x;
     uint32_t summa_group_y;
     uint32_t summa_groups;
@@ -181,6 +185,10 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
 #if VQ_ENABLED == 1
     summa_config_assert((N_tile % VQ_GROUP_SIZE) == 0, 0xE00B);
 #endif
+    const uint32_t n_size_per_group = group_splitN ? (N_size / num_group) : N_size;
+#if VQ_ENABLED == 1
+    summa_config_assert((n_size_per_group % VQ_GROUP_SIZE) == 0, 0xE00C);
+#endif
 
     // Group infomation
     FlexPosition pos           = get_pos(flex_get_cluster_id());
@@ -203,11 +211,12 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
             ? 1
             : 0;
 
+    info.N_size_per_group = n_size_per_group;
+    info.group_n_offset   = info.group_splitN ? (info.group.this_grid_id * n_size_per_group) : 0;
+
     info.M_iter = (M_size + info.summa_group_y * M_tile - 1) / (info.summa_group_y * M_tile);
     info.N_iter =
-        info.group_splitN
-            ? (((N_size / info.summa_groups) + info.summa_group_x * N_tile - 1) / (info.summa_group_x * N_tile))
-            : (N_size + info.summa_group_x * N_tile - 1) / (info.summa_group_x * N_tile);
+        (info.N_size_per_group + info.summa_group_x * N_tile - 1) / (info.summa_group_x * N_tile);
     info.K_iter          = info.group_splitK
                                ? (((K_size / (info.summa_groups * info.group_splitK)) + K_tile - 1) / K_tile)
                                : ((K_size + K_tile - 1) / K_tile); // if splitK, each group handles a portion of K else whole K
@@ -218,6 +227,7 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
     info.store_id        = info.summa_group_x;
     info.store_id_offset = pos.y % info.summa_group_x;
     info.store_active    = (info.group_reduction == 0) ? 1 : (info.group.this_grid_id == 0) ? 1 : 0;
+    uint64_t n_group_byte_offset = (uint64_t)info.group_n_offset * DATA_TYPE_BYTE;
 #if GEMM_RESHA_X_FROM_ENABLE == 1
     info.X_tile_base_offset = info.cluster_in_group_id_y * M_tile * K_size * DATA_TYPE_BYTE;
     info.X_tile_base        = X_address + X_address_group_gap * info.group.this_grid_id;
@@ -225,14 +235,14 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
     info.X_tile_base = X_address + X_address_group_gap * info.group.this_grid_id +
                        info.cluster_in_group_id_y * M_tile * K_size * DATA_TYPE_BYTE;
 #endif
-    info.W_tile_base = W_address + W_address_group_gap * info.group.this_grid_id +
+    info.W_tile_base = W_address + W_address_group_gap * info.group.this_grid_id + n_group_byte_offset +
                        info.cluster_in_group_id_x * N_tile * DATA_TYPE_BYTE;
 #if GEMM_RESHA_Z_TO_ENABLE == 1
     info.Z_tile_base_offset = info.cluster_in_group_id_y * M_tile * N_size * DATA_TYPE_BYTE +
-                              info.cluster_in_group_id_x * N_tile * DATA_TYPE_BYTE;
+                              info.cluster_in_group_id_x * N_tile * DATA_TYPE_BYTE + n_group_byte_offset;
     info.Z_tile_base = Z_address + Z_address_group_gap * info.group.this_grid_id;
 #else
-    info.Z_tile_base = Z_address + Z_address_group_gap * info.group.this_grid_id +
+    info.Z_tile_base = Z_address + Z_address_group_gap * info.group.this_grid_id + n_group_byte_offset +
                        info.cluster_in_group_id_y * M_tile * N_size * DATA_TYPE_BYTE +
                        info.cluster_in_group_id_x * N_tile * DATA_TYPE_BYTE;
 #endif
@@ -278,8 +288,10 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
     info.vq.scale_size = info.K_tile * VQ_CB_BYTES;
 
     // Pre-compute constants to avoid recomputation during loads
-    info.vq.N_compressed      = info.N_size / VQ_GROUP_SIZE;
-    info.vq.N_tile_compressed = info.N_tile / VQ_GROUP_SIZE;
+    info.vq.N_compressed              = info.N_size / VQ_GROUP_SIZE;
+    info.vq.N_compressed_per_group    = info.N_size_per_group / VQ_GROUP_SIZE;
+    info.vq.N_group_offset_compressed = info.group_splitN ? (info.group_n_offset / VQ_GROUP_SIZE) : 0;
+    info.vq.N_tile_compressed         = info.N_tile / VQ_GROUP_SIZE;
 
     uint32_t single_cb_tile_bytes = info.vq.N_tile_compressed * info.K_tile * VQ_IDX_BYTES;
     info.vq.L1_IDX_size           = single_cb_tile_bytes; // Size per codebook (not total)

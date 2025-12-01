@@ -49,11 +49,15 @@ testsw:
 
 
 # GEMM configuration
+ARCH_FILE = ${CUR_DIR}/config/arch/arch_summa.py
 GEMM_FILE ?= $(CUR_DIR)config/kernels/gemm.py
 ifdef gemm
 	GEMM_FILE = $(realpath $(gemm))
 endif
-ARCH_FILE = ${CUR_DIR}/config/arch/arch_summa.py
+GEMV_FILE ?= $(CUR_DIR)config/kernels/gemv.py
+ifdef gemv
+	GEMV_FILE = $(realpath $(gemv))
+endif
 gemm-cfg:
 	@echo "Generating configuration files for GEMM ..."
 	python3 ${CUR_DIR}/scripts/kernels/gemm_config.py ${GEMM_FILE} ${CUR_DIR}/software/SummaGEMM/include/gemm.h
@@ -62,7 +66,7 @@ gemm-pld:
 	@echo "Generating preload files for GEMM ..."
 	python3 ${CUR_DIR}/scripts/kernels/gemm_preload.py \
 			${CUR_DIR}/software/SummaGEMM/preload.elf \
-			${CUR_DIR}/software/SummaGEMM/include/preload.h \
+			${CUR_DIR}/software/SummaGEMM/include/gemm_addresses.h \
 			${ARCH_FILE} \
 			${GEMM_FILE}
 
@@ -123,11 +127,81 @@ gemm-clean:
 	rm -f ${CUR_DIR}/software/SummaGEMM/include/gemm.h \
 	      ${CUR_DIR}/software/SummaGEMM/preload.elf \
 	      ${CUR_DIR}/software/SummaGEMM/preload.dump \
-	      ${CUR_DIR}/software/SummaGEMM/include/preload.h \
 	      ${CUR_DIR}/software/SummaGEMM/include/gemm_data.h \
 	      ${CUR_DIR}/software/SummaGEMM/include/gemm_addresses.h \
 	      ${SH_DIR}/dump_*
+gemv-cfg:
+	@echo "Generating configuration files for GEMV ..."
+	python3 ${CUR_DIR}/scripts/kernels/gemm_config.py ${GEMV_FILE} ${CUR_DIR}/software/SummaGEMM/include/gemm.h
 
+gemv-pld:
+	@echo "Generating preload files for GEMV ..."
+	python3 ${CUR_DIR}/scripts/kernels/gemm_preload.py \
+			${CUR_DIR}/software/SummaGEMM/preload.elf \
+			${CUR_DIR}/software/SummaGEMM/include/gemm_addresses.h \
+			${ARCH_FILE} \
+			${GEMV_FILE}
+
+gemv-data:
+	@echo "Generating data header for GEMV (linker script-based) ..."
+	python3 ${CUR_DIR}/scripts/kernels/gemm_data_generator.py \
+			${CUR_DIR}/software/SummaGEMM/include/gemm_data.h \
+			${ARCH_FILE} \
+			${GEMV_FILE}
+
+gemv-hs:
+	@echo "Compiling SoftHier HW & software for GEMV ..."
+	cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ../../../../ hs
+
+gemv-sw:gemv-pld
+	@echo "Compiling SoftHier software for GEMM ..."
+	cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ${SH_DIR} sw
+	@echo "Running SoftHier simulation for GEMM ..."
+	pld=${CUR_DIR}/software/SummaGEMM/preload.elf cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ${SH_DIR} run
+gemv-swd:gemv-pld
+	@echo "Compiling SoftHier software for GEMM ..."
+	cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ${SH_DIR} sw
+	@echo "Running SoftHier simulation for GEMM ..."
+	pld=${CUR_DIR}/software/SummaGEMM/preload.elf cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ${SH_DIR} rund
+
+# Old preload-based workflow
+gemv-pre: gemv-clean gemv-cfg gemv-pld gemv-hs
+
+gemv-run: gemv-pre
+	@echo "SoftHier simulation for GEMV (preload-based) ..."
+	pld=${CUR_DIR}/software/SummaGEMM/preload.elf make -C ${SH_DIR} run
+gemv-runv: gemv-pre
+	@echo "SoftHier simulation for GEMV (preload-based) ..."
+	pld=${CUR_DIR}/software/SummaGEMM/preload.elf make -C ${SH_DIR} runv pfto
+gemv-run%: gemv-pre
+	@echo "SoftHier simulation for GEMV (preload-based) ..."
+	pld=${CUR_DIR}/software/SummaGEMM/preload.elf make -C ${SH_DIR} run$*
+
+# New linker script-based workflow
+gemv-ls-pre: gemv-clean gemv-cfg gemv-data gemv-hs
+
+gemv-ls-run: gemv-ls-pre
+	@echo "SoftHier simulation for GEMV (linker script-based) ..."
+	make -C ${SH_DIR} run
+gemv-ls-runv: gemv-ls-pre
+	@echo "SoftHier simulation for GEMV (linker script-based) ..."
+	make -C ${SH_DIR} runv pfto
+gemv-ls-run%: gemv-ls-pre
+	@echo "SoftHier simulation for GEMV (linker script-based) ..."
+	make -C ${SH_DIR} run$*
+
+gemv-num:
+	@echo "Numerical check for GEMV ..."
+	python3 ${CUR_DIR}/scripts/kernels/gemm_numerical_check.py ${SH_DIR}/dump_0 ${GEMV_FILE}
+
+gemv-clean:
+	@echo "clean up intermidiate files generated for GEMV ..."
+	rm -f ${CUR_DIR}/software/SummaGEMM/include/gemm.h \
+	      ${CUR_DIR}/software/SummaGEMM/preload.elf \
+	      ${CUR_DIR}/software/SummaGEMM/preload.dump \
+	      ${CUR_DIR}/software/SummaGEMM/include/gemm_data.h \
+	      ${CUR_DIR}/software/SummaGEMM/include/gemm_addresses.h \
+	      ${SH_DIR}/dump_*
 # ============================================================================
 # VQ (Vector Quantization) Workflow Targets
 # ============================================================================

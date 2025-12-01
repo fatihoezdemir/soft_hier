@@ -65,7 +65,15 @@ for module_path in [input_file]:
         print(f"Failed to import {absolute_path}: {e}")
 
 # Generate the C header file
-gemm = SummaGEMM()
+# Auto-detect whether to use SummaGEMV or SummaGEMM
+if 'SummaGEMV' in globals():
+    gemm = globals()['SummaGEMV']()
+    print("Using SummaGEMV configuration (GEMV mode)")
+elif 'SummaGEMM' in globals():
+    gemm = globals()['SummaGEMM']()
+    print("Using SummaGEMM configuration (GEMM mode)")
+else:
+    raise RuntimeError("Neither SummaGEMM nor SummaGEMV class found in the imported module")
 
 # Validate VQ configuration if enabled
 if hasattr(gemm, 'vq_enabled') and gemm.vq_enabled:

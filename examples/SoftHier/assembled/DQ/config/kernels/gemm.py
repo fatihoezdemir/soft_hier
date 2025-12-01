@@ -3,7 +3,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# You may obtain a copyb of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 #
@@ -16,11 +16,16 @@
 #tryout
 
 # Author: Chi Zhang <chizhang@ethz.ch>
-
+#GEMM
 #      K         N            N
 #   |-----|   |-----|      |-----|
 # M |  X  | x |  W  | K => |  Z  | M
 #   |-----|   |-----|      |-----|
+#GEMV
+#      K         N            N
+#             |-----|      
+# 1 | x.T | x |  W  | K => |  Z  | 1
+#             |-----|      
 """
 X Matrix (M×K) - Distributed by ROWS:
      k0    k1    k2   ← K dimension partitions
@@ -59,25 +64,25 @@ class SummaGEMM:
 
         #GEMM parameters
         self.dtype                   = 'fp16'
-        self.m_size                  = 512
-        self.n_size                  = 512
-        self.k_size                  = 512
+        self.m_size                  = 1
+        self.n_size                  = 512 * 1
+        self.k_size                  = 512 * 1
 
         #Hyperparamters Settings
         ## [Tile ]: tile size for each cluster
-        self.m_tile                  = 128
-        self.n_tile                  = 128
-        self.k_tile                  = 128
+        self.m_tile                  = 1
+        self.n_tile                  = 128 // 1
+        self.k_tile                  = 128 // 1
         ## [Scale]: How many clusters (x=scale, y=scale) are assigned one GEMM.
         ##          For a set of clusters (x=scale, y=scale) we would call it **Group**
         self.summa_scale_x           = 4
-        self.summa_scale_y           = 4
+        self.summa_scale_y           = 1
         ## [Group]: How many summa group
         ##          Do we need to reduce all groups
         ##          Adress gaps between groups
-        self.summa_group_number      = 1
-        self.summa_group_reduce      = 0
-        self.summa_group_splitk      = 0
+        self.summa_group_number      = 4
+        self.summa_group_reduce      = 1
+        self.summa_group_splitk      = 1
         self.summa_group_splitn      = 0
         self.summa_group_gap_x       = 0
         self.summa_group_gap_w       = 0
@@ -98,7 +103,7 @@ class SummaGEMM:
         self.vq_source                 = "gen"   # Source: "gen" (generated) or "dl" (downloaded)
         self.vq_algorithm              = "aqlm"  # Algorithm: "aqlm", "vptq", etc.
         self.vq_use_scales            = 1 if  self.vq_algorithm =="aqlm" else 0  # Whether to use per-group scales
-        self.vq_num_cb                 = 2       # Number of codebooks
+        self.vq_num_cb                 = 2 if  self.vq_algorithm =="aqlm" else 1      # Number of codebooks
         self.vq_nbits_per_cb           = 8       # Bits per codebook index (2^8 = 256 centroids)
         self.vq_group_size             = 8       # Centroid vector length (group size)
         self.vq_cb_size                = 256     # Codebook size (number of centroids in each codebook)
@@ -114,4 +119,46 @@ class SummaGEMM:
         self.vq_repo_id                = "ISTA-DASLab/Llama-2-7b-AQLM-2Bit-2x8-hf"    # e.g., "ISTA-DASLab/Llama-2-7b-AQLM-PV-2Bit-2x8-hf"
         self.vq_weight_file            = None    # e.g., "model.safetensors"
         self.vq_layer_prefix           = None    # e.g., "model.layers.0.mlp.down_proj"
-            
+        dtype_bytes = self._dtype_nbytes()
+
+        if self.summa_group_splitk > 0:
+            total_k_partitions = self.summa_group_number * self.summa_group_splitk
+            if total_k_partitions <= 1:
+                raise ValueError("SplitK requires summa_group_number * summa_group_splitk > 1.")
+            if self.k_size % total_k_partitions != 0:
+                raise ValueError(
+                    f"K dimension {self.k_size} must be divisible by summa_group_number*summa_group_splitk ({total_k_partitions})."
+                )
+            k_chunk = self.k_size // total_k_partitions
+            self.summa_group_gap_x = k_chunk * dtype_bytes
+            self.summa_group_gap_w = k_chunk * self.n_size * dtype_bytes
+            self.summa_group_gap_z = 0
+            self.summa_group_reduce = 1
+
+        self._validate_alignment()
+
+    def _validate_alignment(self):
+        """catch invalid tilinglayout choices."""
+        m_block = self.summa_scale_y * self.m_tile
+        n_block = self.summa_scale_x * self.n_tile
+
+        if self.m_size % m_block != 0:
+            raise ValueError(f"M dimension {self.m_size} must be a multiple of summa_scale_y*m_tile ({m_block}).")
+        if self.n_size % n_block != 0:
+            raise ValueError(f"N dimension {self.n_size} must be a multiple of summa_scale_x*n_tile ({n_block}).")
+        if self.k_size % self.k_tile != 0:
+            raise ValueError(f"K dimension {self.k_size} must be a multiple of k_tile ({self.k_tile}).")
+        if self.n_tile % self.vq_group_size != 0:
+            raise ValueError(f"n_tile {self.n_tile} must be a multiple of VQ group size ({self.vq_group_size}).")
+
+    def _dtype_nbytes(self):
+        dtype_bytes = {
+            'fp16': 2,
+            'fp8': 1,
+            'uint8': 1,
+            'int8': 1,
+            'fp32': 4,
+        }
+        if self.dtype not in dtype_bytes:
+            raise ValueError(f"Unsupported dtype '{self.dtype}' for gap calculation.")
+        return dtype_bytes[self.dtype]

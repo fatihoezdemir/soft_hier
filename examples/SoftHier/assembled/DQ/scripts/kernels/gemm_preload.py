@@ -65,19 +65,31 @@ def gen_vq_preload_data(gemm):
     # Check if we should load from pretrained or cache
     cache_dir = os.path.join(os.path.dirname(__file__), '../../vq_cache')
 
-    # Determine source prefix based on vq_source config
+    # Determine algorithm and source from gemm config
+    vq_algorithm = getattr(gemm, 'vq_algorithm', 'aqlm')  # Default to 'aqlm'
     vq_source = getattr(gemm, 'vq_source', 'gen')  # Default to 'gen' if not specified
-    source_prefix = f"aqlm_{vq_source}"
+    source_prefix = f"{vq_algorithm}_{vq_source}"
     source_name = "generated" if vq_source == "gen" else "downloaded"
 
-    # Match naming convention from aqlm_quantizer.py and download.py
-    config_str = f"{vq_config.num_codebooks}x{vq_config.in_group_size}"
+    # Match naming convention from quantizer scripts
+    # AQLM: {num_codebooks}x{in_group_size}, e.g., 2x8
+    # VPTQ: 1x{vlen_normal}, e.g., 1x6 for 4096 centroids
+    if vq_algorithm == 'aqlm':
+        config_str = f"{vq_config.num_codebooks}x{vq_config.in_group_size}"
+    elif vq_algorithm == 'vptq':
+        # For VPTQ, use single codebook with vector length
+        config_str = f"1x{vq_config.in_group_size}"
+    else:
+        raise ValueError(f"Unsupported vq_algorithm: {vq_algorithm}. Use 'aqlm' or 'vptq'.")
+
     dim_str = f"_dim{vq_config.k_size}x{vq_config.n_size}"
 
     codebooks_path = os.path.join(cache_dir, f"{source_prefix}{config_str}{dim_str}_cb.npy")
     indices_path = os.path.join(cache_dir, f"{source_prefix}{config_str}{dim_str}_idx.npy")
     scales_path = os.path.join(cache_dir, f"{source_prefix}{config_str}{dim_str}_scales.npy")
     w_hat_path = os.path.join(cache_dir, f"{source_prefix}{config_str}{dim_str}_W_hat.npy")
+
+    print(f"VQ algorithm: {vq_algorithm}")
     print(f"VQ source: {source_name} (vq_source='{vq_source}')")
     print(f"Checking for VQ cache at: {indices_path}")
     if os.path.exists(codebooks_path) and os.path.exists(indices_path):
@@ -191,28 +203,28 @@ def gen_gemm_preload_numpy_arrays(gemm):
             Z_fptype = torch.cat(Z_fptype.split(gemm.resha_z_to_m, dim=0), dim=1)
         pass
 
-    # Duplicate for groups
+    # Duplicate for groups, foezdemir: no need to duplicate?
     X_list = []
     W_list = []
     Z_list = []
     if gemm.summa_group_gap_x != 0:
-        for g in range(gemm.summa_group_number):
-            X_list.append(X_fptype.clone())
-            pass
-        X_fptype = torch.cat(X_list, dim=0)
-        pass
+        if getattr(gemm, "summa_group_splitk", 0) > 0:
+            print("SplitK active: skip duplicating X; address gaps per-group slices.")
+        else:
+            for g in range(gemm.summa_group_number):
+                X_list.append(X_fptype.clone())
+            X_fptype = torch.cat(X_list, dim=0)
     if gemm.summa_group_gap_w != 0:
-        for g in range(gemm.summa_group_number):
-            W_list.append(W_fptype.clone())
-            pass
-        W_fptype = torch.cat(W_list, dim=0)
-        pass
+        if getattr(gemm, "summa_group_splitk", 0) > 0:
+            print("SplitK active: skip duplicating W; address gaps  per-group slices.")
+        else:
+            for g in range(gemm.summa_group_number):
+                W_list.append(W_fptype.clone())
+            W_fptype = torch.cat(W_list, dim=0)
     if gemm.summa_group_gap_z != 0:
         for g in range(gemm.summa_group_number):
             Z_list.append(Z_fptype.clone())
-            pass
         Z_fptype = torch.cat(Z_list, dim=0)
-        pass
 
     # convert to NumPy: cast to float16 (NumPy may not support PyTorch fptype dtype)
     if fptype == torch.float8_e5m2:

@@ -219,7 +219,7 @@ static inline void run_gemv_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
                 summa_vq_load_indices(info, buffer_idx, m, n, next_idx_tile);
 #if VQ_USE_SCALES == 1
                 uint32_t dst_scale = scale_buffers[buffer_idx];
-                summa_vq_load_scales(info, dst_scale, m, n, next_idx_tile);
+                summa_vq_load_scales(info, dst_scale, m, n, next_idx_tile);//
 #endif
                 ++next_idx_tile;
             }

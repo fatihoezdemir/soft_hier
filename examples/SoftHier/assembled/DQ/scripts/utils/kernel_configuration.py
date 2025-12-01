@@ -40,6 +40,11 @@ def generate_config_C_header(header_prefix, config, C_header_file, dtype, numeri
             if 'ENABLE' in define_name:
                 file.write(f'#define {define_name} {attr_value}\n')
                 continue
+            if attr_value is None: 
+                continue
+            if 'COMPUTE' in define_name and attr_value is not None :
+                file.write(f'#define {attr_name.upper()} {attr_value}\n')
+                continue
 
 
 

@@ -58,20 +58,24 @@ m2│ Z20 │ Z21 │ Z22 │
   └─────┴─────┴─────┘
 """
 
-class SummaGEMM:
+class SummaGEMV:
 
     def __init__(self):
 
         #GEMM parameters
         self.dtype                   = 'fp16'
         self.m_size                  = 1
-        self.n_size                  = 512 * 1
-        self.k_size                  = 512 * 1
+        # Default to 4K columns to fully occupy 4 groups × 4 clusters (128-col tiles)
+        # Smaller N can be used, but split-N settings must be adjusted accordingly.
+        self.n_size                  = 1024
+        self.k_size                  = 512 
+        self.compute_kernel_gemm                    = None
+        self.compute_kernel_gemv                    = 1
 
         #Hyperparamters Settings
         ## [Tile ]: tile size for each cluster
         self.m_tile                  = 1
-        self.n_tile                  = 128 // 1
+        self.n_tile                  = 64 
         self.k_tile                  = 128 // 1
         ## [Scale]: How many clusters (x=scale, y=scale) are assigned one GEMM.
         ##          For a set of clusters (x=scale, y=scale) we would call it **Group**
@@ -81,9 +85,9 @@ class SummaGEMM:
         ##          Do we need to reduce all groups
         ##          Adress gaps between groups
         self.summa_group_number      = 4
-        self.summa_group_reduce      = 1
-        self.summa_group_splitk      = 1
-        self.summa_group_splitn      = 0
+        self.summa_group_reduce      = 0
+        self.summa_group_splitk      = 0
+        self.summa_group_splitn      = 1
         self.summa_group_gap_x       = 0
         self.summa_group_gap_w       = 0
         self.summa_group_gap_z       = 0
@@ -97,7 +101,7 @@ class SummaGEMM:
         self.summa_numer_chunk       = 8192
 
         # [VQ]: Vector Quantization Settings
-        self.vq_enabled                = 1
+        self.vq_enabled                = 0
         
         self.vq_force_weight_load      = 0
         self.vq_source                 = "gen"   # Source: "gen" (generated) or "dl" (downloaded)
@@ -142,14 +146,24 @@ class SummaGEMM:
         m_block = self.summa_scale_y * self.m_tile
         n_block = self.summa_scale_x * self.n_tile
 
-        if self.m_size % m_block != 0:
-            raise ValueError(f"M dimension {self.m_size} must be a multiple of summa_scale_y*m_tile ({m_block}).")
+
         if self.n_size % n_block != 0:
             raise ValueError(f"N dimension {self.n_size} must be a multiple of summa_scale_x*n_tile ({n_block}).")
         if self.k_size % self.k_tile != 0:
             raise ValueError(f"K dimension {self.k_size} must be a multiple of k_tile ({self.k_tile}).")
         if self.n_tile % self.vq_group_size != 0:
             raise ValueError(f"n_tile {self.n_tile} must be a multiple of VQ group size ({self.vq_group_size}).")
+        if self.summa_group_splitn:
+            if self.n_size % self.summa_group_number != 0:
+                raise ValueError(
+                    f"SplitN requires N ({self.n_size}) divisible by summa_group_number ({self.summa_group_number})."
+                )
+            n_size_per_group = self.n_size // self.summa_group_number
+            if n_size_per_group % n_block != 0:
+                raise ValueError(
+                    f"Pergroup N ({n_size_per_group}) must be a multiple of summa_scale_x*n_tile ({n_block}) "
+                    f"for split-N. Reduce summa_group_number or summa_scale_x or increase N."
+                )
 
     def _dtype_nbytes(self):
         dtype_bytes = {
@@ -162,3 +176,6 @@ class SummaGEMM:
         if self.dtype not in dtype_bytes:
             raise ValueError(f"Unsupported dtype '{self.dtype}' for gap calculation.")
         return dtype_bytes[self.dtype]
+
+# Backward compat
+SummaGEMM = SummaGEMV

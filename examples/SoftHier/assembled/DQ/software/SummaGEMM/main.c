@@ -9,7 +9,6 @@
 // Author: Chi Zhang <chizhang@iis.ee.ethz.ch>, ETH Zurich
 // Date: 1.Oct.2025
 
-#include "SummaGEMMVQ.h"
 #include "flex_dump.h"
 #include "flex_runtime.h"
 #include "gemm.h"
@@ -21,6 +20,8 @@
 #endif
 
 #include "include/SummaGEMM.h"
+#include "include/SummaGEMV.h"
+
 int main() {
     uint32_t eoc_val = 0;
     flex_barrier_xy_init();
@@ -49,8 +50,6 @@ int main() {
     flex_global_barrier_xy();
 
     // execute SUMMA GEMM
-    if (flex_get_core_id() == 0 && flex_get_cluster_id() == 0)
-        flex_timer_start();
     flex_global_barrier_xy();
     if (flex_get_cluster_id() == 0 && flex_is_dm_core()) {
         printf(" hbm west: %lx north: %lx east: %lx south: %lx\n", hbm_west(0, 0), hbm_north(0, 0), hbm_east(0, 0),
@@ -64,10 +63,13 @@ int main() {
         printf(" hbm west: %lx north: %lx east: %lx south: %lx\n", hbm_west(0, 0), hbm_north(0, 0), hbm_east(0, 0),
                hbm_south(0, 0));
     }
-#if VQ_ENABLED == 1
+    if (flex_get_core_id() == 0 && flex_get_cluster_id() == 0)
+        flex_timer_start();
+#ifdef COMPUTE_KERNEL_GEMM
     SummaGEMMRun(&info);
-#else
-    SummaGEMMRunVQ(&info);
+#endif
+#ifdef COMPUTE_KERNEL_GEMV 1
+    SummaGEMVRun(&info);
 #endif
     if (flex_get_core_id() == 0 && flex_get_cluster_id() == 0)
         flex_timer_end();

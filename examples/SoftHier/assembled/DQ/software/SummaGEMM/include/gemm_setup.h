@@ -15,7 +15,6 @@ typedef struct VQ {
     // Addressing Information
 
     // L1 location information
-
     uint32_t L1_CB[VQ_NUM_CBS];   //
     uint32_t L1_IDX1[VQ_NUM_CBS]; // 2 indices buffers /codebook
     uint32_t L1_IDX2[VQ_NUM_CBS];
@@ -214,9 +213,8 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
     info.N_size_per_group = n_size_per_group;
     info.group_n_offset   = info.group_splitN ? (info.group.this_grid_id * n_size_per_group) : 0;
 
-    info.M_iter = (M_size + info.summa_group_y * M_tile - 1) / (info.summa_group_y * M_tile);
-    info.N_iter =
-        (info.N_size_per_group + info.summa_group_x * N_tile - 1) / (info.summa_group_x * N_tile);
+    info.M_iter          = (M_size + info.summa_group_y * M_tile - 1) / (info.summa_group_y * M_tile);
+    info.N_iter          = (info.N_size_per_group + info.summa_group_x * N_tile - 1) / (info.summa_group_x * N_tile);
     info.K_iter          = info.group_splitK
                                ? (((K_size / (info.summa_groups * info.group_splitK)) + K_tile - 1) / K_tile)
                                : ((K_size + K_tile - 1) / K_tile); // if splitK, each group handles a portion of K else whole K

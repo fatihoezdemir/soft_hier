@@ -127,8 +127,9 @@ static inline void summa_vq_load_indices(SummaGEMMInfo* info, int buffer_idx, in
     uint32_t N_compressed      = info->vq.N_compressed;
     uint32_t N_tile_compressed = info->vq.N_tile_compressed;
     uint32_t tile_col_index    = n * info->summa_group_x + info->cluster_in_group_id_x;
-    uint32_t group_start       = tile_col_index * N_tile_compressed;
-    uint32_t row_start         = k * info->K_tile;
+    // Add group offset for split-N support
+    uint32_t group_start = info->vq.N_group_offset_compressed + tile_col_index * N_tile_compressed;
+    uint32_t row_start   = k * info->K_tile;
 
     // Load indices from separate arrays (one per codebook) to separate L1 buffers
     for (int cb = 0; cb < VQ_NUM_CBS; ++cb) {

@@ -10,7 +10,6 @@
 #include "summa_dma.h"
 #include "summa_index.h"
 
-
 // run_gemv_pipeline is basically run_gemm_pipeline vice versa for run_gemv_pipeline_vq , TODO change this , adapt
 static inline void run_gemv_pipeline(SummaGEMMInfo* info, int m, int n, uint32_t* DMA_L1_Z, uint32_t* REDMULE_L1_Z) {
     // Prefetching PIPELINE PROLOGUE_|""
@@ -55,11 +54,8 @@ static inline void run_gemv_pipeline(SummaGEMMInfo* info, int m, int n, uint32_t
                 }
             }
 
-            if (info->store_recorded == 1 && info->store_active == 1) {
-                if (info->group_reduction == 0) {
-                    summa_reduce_and_store_Z(info, *DMA_L1_Z, true);
-                    info->store_id = info->summa_group_x;
-                } else {
+            if (info->store_active == 1 && info->store_recorded == 1) {
+                if (info->group_reduction == 1) {
                     uint32_t start_id = (info->store_id < info->store_step) ? 0 : info->store_id - info->store_step;
                     uint32_t bid      = (start_id + info->store_id_offset) % info->summa_group_x;
                     uint32_t eid      = (info->store_id + info->store_id_offset) % info->summa_group_x;
@@ -70,6 +66,11 @@ static inline void run_gemv_pipeline(SummaGEMMInfo* info, int m, int n, uint32_t
                     }
 
                     info->store_id = start_id;
+                } else if (info->group_reduction == 0) {
+                    // No inter-group reduction: store tile immediately and clear buffer
+                    summa_reduce_and_store_Z(info, *DMA_L1_Z, true);
+                    info->store_id       = info->summa_group_x;
+                    info->store_recorded = 0;
                 }
             }
         }
@@ -86,7 +87,7 @@ static inline void run_gemv_pipeline(SummaGEMMInfo* info, int m, int n, uint32_t
     } else {
         grid_sync_group_barrier_xy(&(info->group));
     }
-    info->store_recorded = 1;
+    info->store_recorded = 1; // flag: have data ready to store in next iteration
     info->store_m        = m;
     info->store_n        = n;
     info->store_id       = info->summa_group_x;
@@ -219,7 +220,7 @@ static inline void run_gemv_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
                 summa_vq_load_indices(info, buffer_idx, m, n, next_idx_tile);
 #if VQ_USE_SCALES == 1
                 uint32_t dst_scale = scale_buffers[buffer_idx];
-                summa_vq_load_scales(info, dst_scale, m, n, next_idx_tile);//
+                summa_vq_load_scales(info, dst_scale, m, n, next_idx_tile); //
 #endif
                 ++next_idx_tile;
             }
@@ -241,12 +242,11 @@ static inline void run_gemv_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
         // Ensure DMA and SPATZ finish their preparation work
         flex_intra_cluster_sync();
 
-        //wait for RedMulE beofore finishing tile (tile-1)
+        // wait for RedMulE beofore finishing tile (tile-1)
         if (flex_is_first_core()) {
             flex_redmule_wait(); // ← CRITICAL: Fence before store!
         }
         flex_intra_cluster_sync();
-
 
         // STAGE 3: STORE tile (tile-1) result (now safe - compute finished!)
         if (flex_is_dm_core() && info->store_recorded == 1 && info->store_active == 1) {
@@ -268,7 +268,7 @@ static inline void run_gemv_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
         }
 
         // ─────────────────────────────────────────────────────────────
-        // STAGE 4: TRIGGER REDMULE for tile (tile) 
+        // STAGE 4: TRIGGER REDMULE for tile (tile)
         // ─────────────────────────────────────────────────────────────
         if (flex_is_first_core()) {
             flex_redmule_config(info->M_tile, info->K_tile, info->N_tile);
@@ -325,10 +325,8 @@ void SummaGEMVRun(SummaGEMMInfo* info) {
 
         initZBuffer(info);
 
-
-            for (int n = 0; n < info->N_iter; ++n) {
-                run_gemv_pipeline(info, 0/*m*/, n, &DMA_L1_Z, &REDMULE_L1_Z);
-            
+        for (int n = 0; n < info->N_iter; ++n) {
+            run_gemv_pipeline(info, 0 /*m*/, n, &DMA_L1_Z, &REDMULE_L1_Z);
         }
         // store
         if (flex_is_dm_core() && info->store_active == 1) {

@@ -319,18 +319,12 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
     off += L1_scales_size;
 #endif
 
-    // info.VQ_CB_size     = cb_size * DATA_TYPE_BYTE;
-    // info.VQ_Scale_size  = scale_size * DATA_TYPE_BYTE;
-    // info.VQ_Index_size  = idx_size * DATA_TYPE_BYTE;
+
 #endif
     if (flex_get_cluster_id() == 1 && flex_is_dm_core()) {
         printf("\n M N K iter: %d %d %d\n", info.M_iter, info.N_iter, info.K_iter);
-        // printf("\n L1 addresses %0x %0x %0x %0x %0x %0x   \n",info.L1_X1 ,info.L1_W1, info.L1_Z1, info.L1_X2,
-        // info.L1_W2, info.L1_Z2);
-        // printf("\n L1 VQ addresses %0x %0x %0x %0x %0x %0x   \n",, info.vq.L1_CB[0], info.vq.L1_CB[1],
-        //        info.L1_X2, info.L1_W2, info.L1_Z2);
     }
-    info.L1_AREA = info.L1_Z2 + info.L1_Z_size;
+    info.L1_AREA = off;
     return info;
 }
 

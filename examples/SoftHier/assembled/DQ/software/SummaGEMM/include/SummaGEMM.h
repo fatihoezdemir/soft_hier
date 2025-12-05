@@ -9,7 +9,7 @@
 #include "gemm_setup.h"
 #include "summa_dma.h"
 #include "summa_index.h"
-
+#include "vq_kernels.h"
 /*
      ┌─────┬─────┬─────┐
      │X00→→│→→→→→│→→→→→│  Row 0 broadcasts X00

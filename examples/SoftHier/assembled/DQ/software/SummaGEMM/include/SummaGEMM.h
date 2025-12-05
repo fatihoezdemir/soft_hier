@@ -246,12 +246,11 @@ static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
         // Ensure DMA and SPATZ finish their preparation work
         flex_intra_cluster_sync();
 
-        //wait for RedMulE beofore finishing tile (tile-1)
+        // wait for RedMulE beofore finishing tile (tile-1)
         if (flex_is_first_core()) {
             flex_redmule_wait(); // ← CRITICAL: Fence before store!
         }
         flex_intra_cluster_sync();
-
 
         // STAGE 3: STORE tile (tile-1) result (now safe - compute finished!)
         if (flex_is_dm_core() && info->store_recorded == 1 && info->store_active == 1) {
@@ -268,7 +267,7 @@ static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
         }
 
         // ─────────────────────────────────────────────────────────────
-        // STAGE 4: TRIGGER REDMULE for tile (tile) 
+        // STAGE 4: TRIGGER REDMULE for tile (tile)
         // ─────────────────────────────────────────────────────────────
         if (flex_is_first_core()) {
             flex_redmule_config(info->M_tile, info->K_tile, info->N_tile);
@@ -327,7 +326,7 @@ void SummaGEMMRun(SummaGEMMInfo* info) {
 
         for (int m = 0; m < info->M_iter; ++m) {
             for (int n = 0; n < info->N_iter; ++n) {
-                run_gemm_pipeline(info, m, n, &DMA_L1_Z, &REDMULE_L1_Z);
+                run_gemm_pipelinevq(info, m, n, &DMA_L1_Z, &REDMULE_L1_Z);
             }
         }
         // store

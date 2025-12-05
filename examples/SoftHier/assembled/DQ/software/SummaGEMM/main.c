@@ -52,16 +52,27 @@ int main() {
     // execute SUMMA GEMM
     flex_global_barrier_xy();
     if (flex_get_cluster_id() == 0 && flex_is_dm_core()) {
-        printf(" hbm west: %lx north: %lx east: %lx south: %lx\n", hbm_west(0, 0), hbm_north(0, 0), hbm_east(0, 0),
-               hbm_south(0, 0));
-        printf(" hbm west: %lx north: %lx east: %lx south: %lx\n", hbm_west(0, 0), hbm_north(0, 0), hbm_east(0, 0),
-               hbm_south(0, 0));
-        printf(" hbm west: %lx north: %lx east: %lx south: %lx\n", hbm_west(0, 0), hbm_north(0, 0), hbm_east(0, 0),
-               hbm_south(0, 0));
-        printf(" hbm west: %lx north: %lx east: %lx south: %lx\n", hbm_west(0, 0), hbm_north(0, 0), hbm_east(0, 0),
-               hbm_south(0, 0));
-        printf(" hbm west: %lx north: %lx east: %lx south: %lx\n", hbm_west(0, 0), hbm_north(0, 0), hbm_east(0, 0),
-               hbm_south(0, 0));
+printf("------------------------------------------------------------\n");
+printf("                    L1 MEMORY LAYOUT INFO                   \n");
+printf("------------------------------------------------------------\n");
+printf("  X1:  0x%05lx   Size: %-5lu bytes\n", info.L1_X1, info.L1_X_size);
+printf("  W1:  0x%05lx   Size: %-5lu bytes\n", info.L1_W1, info.L1_W_size);
+printf("  Z1:  0x%05lx   Size: %-5lu bytes\n", info.L1_Z1, info.L1_Z_size);
+printf("------------------------------------------------------------\n");
+printf("  X2:  0x%05lx   Size: %-5lu bytes\n", info.L1_X2, info.L1_X_size);
+printf("  W2:  0x%05lx   Size: %-5lu bytes\n", info.L1_W2, info.L1_W_size);
+printf("  Z2:  0x%05lx   Size: %-5lu bytes\n", info.L1_Z2, info.L1_Z_size);
+printf("------------------------------------------------------------\n");
+printf("  Total L1 Area  : 0x%08lx (%lu bytes)\n", info.L1_AREA, info.L1_AREA);
+printf("  L1 Usage Ratio : %.2f %% of ARCH_CLUSTER_TCDM_SIZE\n",
+        100.0 * info.L1_AREA / ARCH_CLUSTER_TCDM_SIZE);
+printf("------------------------------------------------------------\n");
+printf("  HBM Connections:\n");
+printf("      West : 0x%08lx\n", hbm_west(0, 0));
+printf("      North: 0x%08lx\n", hbm_north(0, 0));
+printf("      East : 0x%08lx\n", hbm_east(0, 0));
+printf("      South: 0x%08lx\n", hbm_south(0, 0));
+printf("------------------------------------------------------------\n");
     }
     if (flex_get_core_id() == 0 && flex_get_cluster_id() == 0)
         flex_timer_start();
@@ -103,3 +114,14 @@ int main() {
     flex_eoc(eoc_val);
     return 0;
 }
+
+
+
+// ------------------------------------------------------------
+//   X1:  0x00000   Size: 256   bytes
+//   W1:  0x00100   Size: 16384 bytes
+//   Z1:  0x04100   Size: 128   bytes
+// ------------------------------------------------------------
+//   X2:  0x04180   Size: 256   bytes
+//   W2:  0x04280   Size: 16384 bytes
+//   Z2:  0x08280   Size: 128   bytes

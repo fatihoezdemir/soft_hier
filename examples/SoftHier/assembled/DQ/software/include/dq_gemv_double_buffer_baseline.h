@@ -124,7 +124,7 @@ void dq_gemv_double_buffer_baseline() {
             spatz_gemv_fp16_full_legacy((uint16_t*)l1_buffers.x_vec, // x vector [1 x M]
                                         (uint16_t*)g_l1_dq.W_dq,     // W_tile [M x P]
                                         (uint16_t*)l1_buffers.y_vec, // y_tile [1 x P]
-                                        1, FP16_M, P);
+                                        1, FP16_M, P, false);
             flex_timer_end();
             debug("\t[SPATZ] Computing  8 elements\n\t");
         }
@@ -276,7 +276,7 @@ void dq_gemv_double_buffer_extended() {
             spatz_gemv_fp16_full_legacy((uint16_t*)l1_buffers.x_vec, // x vector [1 x M]
                                         (uint16_t*)g_l1_dq.W_dq,     // W_tile [M x P]
                                         (uint16_t*)l1_buffers.y_vec, // y_tile [1 x P]
-                                        1, FP16_M, P);
+                                        1, FP16_M, P, false);
             flex_timer_end();
         }
 

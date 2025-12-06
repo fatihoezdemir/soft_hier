@@ -319,7 +319,6 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
     off += L1_scales_size;
 #endif
 
-
 #endif
     if (flex_get_cluster_id() == 1 && flex_is_dm_core()) {
         printf("\n M N K iter: %d %d %d\n", info.M_iter, info.N_iter, info.K_iter);

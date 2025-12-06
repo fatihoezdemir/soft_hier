@@ -52,27 +52,59 @@ int main() {
     // execute SUMMA GEMM
     flex_global_barrier_xy();
     if (flex_get_cluster_id() == 0 && flex_is_dm_core()) {
-printf("------------------------------------------------------------\n");
-printf("                    L1 MEMORY LAYOUT INFO                   \n");
-printf("------------------------------------------------------------\n");
-printf("  X1:  0x%05lx   Size: %-5lu bytes\n", info.L1_X1, info.L1_X_size);
-printf("  W1:  0x%05lx   Size: %-5lu bytes\n", info.L1_W1, info.L1_W_size);
-printf("  Z1:  0x%05lx   Size: %-5lu bytes\n", info.L1_Z1, info.L1_Z_size);
-printf("------------------------------------------------------------\n");
-printf("  X2:  0x%05lx   Size: %-5lu bytes\n", info.L1_X2, info.L1_X_size);
-printf("  W2:  0x%05lx   Size: %-5lu bytes\n", info.L1_W2, info.L1_W_size);
-printf("  Z2:  0x%05lx   Size: %-5lu bytes\n", info.L1_Z2, info.L1_Z_size);
-printf("------------------------------------------------------------\n");
-printf("  Total L1 Area  : 0x%08lx (%lu bytes)\n", info.L1_AREA, info.L1_AREA);
-printf("  L1 Usage Ratio : %.2f %% of ARCH_CLUSTER_TCDM_SIZE\n",
-        100.0 * info.L1_AREA / ARCH_CLUSTER_TCDM_SIZE);
-printf("------------------------------------------------------------\n");
-printf("  HBM Connections:\n");
-printf("      West : 0x%08lx\n", hbm_west(0, 0));
-printf("      North: 0x%08lx\n", hbm_north(0, 0));
-printf("      East : 0x%08lx\n", hbm_east(0, 0));
-printf("      South: 0x%08lx\n", hbm_south(0, 0));
-printf("------------------------------------------------------------\n");
+        printf("------------------------------------------------------------\n");
+        printf("                    L1 MEMORY LAYOUT INFO                   \n");
+        printf("------------------------------------------------------------\n");
+        printf("  X1:  0x%05lx   Size: %-5lu bytes\n", info.L1_X1, info.L1_X_size);
+        printf("  W1:  0x%05lx   Size: %-5lu bytes\n", info.L1_W1, info.L1_W_size);
+        printf("  Z1:  0x%05lx   Size: %-5lu bytes\n", info.L1_Z1, info.L1_Z_size);
+        printf("------------------------------------------------------------\n");
+        printf("  X2:  0x%05lx   Size: %-5lu bytes\n", info.L1_X2, info.L1_X_size);
+        printf("  W2:  0x%05lx   Size: %-5lu bytes\n", info.L1_W2, info.L1_W_size);
+        printf("  Z2:  0x%05lx   Size: %-5lu bytes\n", info.L1_Z2, info.L1_Z_size);
+        printf("------------------------------------------------------------\n");
+#if VQ_ENABLED == 1
+        printf("  VQ BUFFERS (NUM_CBS=%d):\n", VQ_NUM_CBS);
+        printf("------------------------------------------------------------\n");
+        for (int i = 0; i < VQ_NUM_CBS; i++) {
+            printf("  Codebook[%d]:   L1: 0x%05lx   Size: %-5lu bytes\n", i, info.vq.L1_CB[i], info.vq.L1_CB_size);
+            printf("                 HBM: 0x%08lx\n", info.vq.VQ_CB_address[i]);
+        }
+        printf("------------------------------------------------------------\n");
+        for (int i = 0; i < VQ_NUM_CBS; i++) {
+            printf("  Indices[%d] (double-buffered):\n", i);
+            printf("    IDX1[%d]:     L1: 0x%05lx   Size: %-5lu bytes\n", i, info.vq.L1_IDX1[i], info.vq.L1_IDX_size);
+            printf("    IDX2[%d]:     L1: 0x%05lx   Size: %-5lu bytes\n", i, info.vq.L1_IDX2[i], info.vq.L1_IDX_size);
+            printf("                 HBM: 0x%08lx\n", info.vq.VQ_Index_address[i]);
+        }
+        printf("------------------------------------------------------------\n");
+#if VQ_USE_SCALES == 1
+        uint32_t L1_scales_size = info.K_tile * VQ_CB_BYTES;
+        printf("  Scales (double-buffered):\n");
+        printf("    Scale[0]:    L1: 0x%05lx   Size: %-5lu bytes\n", info.vq.L1_Scales[0], L1_scales_size);
+        printf("    Scale[1]:    L1: 0x%05lx   Size: %-5lu bytes\n", info.vq.L1_Scales[1], L1_scales_size);
+        printf("                 HBM: 0x%08lx\n", info.vq.VQ_Scale_address);
+        printf("------------------------------------------------------------\n");
+#endif
+        printf("  VQ Configuration:\n");
+        printf("    CB size:      %lu bytes (%d centroids x %d bytes)\n", info.vq.cb_size, VQ_CB_NUM_CENTROIDS,
+               VQ_GROUP_SIZE * VQ_CB_BYTES);
+        printf("    IDX size:     %lu bytes (%d compressed x %d tile)\n", info.vq.idx_size, info.vq.N_tile_compressed,
+               info.K_tile);
+        printf("    Scale size:   %lu bytes\n", info.vq.scale_size);
+        printf("    Group size:   %d\n", VQ_GROUP_SIZE);
+        printf("    N_compressed: %lu (N_tile: %lu)\n", info.vq.N_compressed, info.vq.N_tile_compressed);
+        printf("------------------------------------------------------------\n");
+#endif
+        printf("  Total L1 Area  : 0x%08lx (%lu bytes)\n", info.L1_AREA, info.L1_AREA);
+        printf("  L1 Usage Ratio : %.2f %% of ARCH_CLUSTER_TCDM_SIZE\n", 100.0 * info.L1_AREA / ARCH_CLUSTER_TCDM_SIZE);
+        printf("------------------------------------------------------------\n");
+        printf("  HBM Connections:\n");
+        printf("      West : 0x%08lx\n", hbm_west(0, 0));
+        printf("      North: 0x%08lx\n", hbm_north(0, 0));
+        printf("      East : 0x%08lx\n", hbm_east(0, 0));
+        printf("      South: 0x%08lx\n", hbm_south(0, 0));
+        printf("------------------------------------------------------------\n");
     }
     if (flex_get_core_id() == 0 && flex_get_cluster_id() == 0)
         flex_timer_start();
@@ -114,8 +146,6 @@ printf("------------------------------------------------------------\n");
     flex_eoc(eoc_val);
     return 0;
 }
-
-
 
 // ------------------------------------------------------------
 //   X1:  0x00000   Size: 256   bytes

@@ -106,6 +106,7 @@ int main() {
         printf("      South: 0x%08lx\n", hbm_south(0, 0));
         printf("------------------------------------------------------------\n");
     }
+
     if (flex_get_core_id() == 0 && flex_get_cluster_id() == 0)
         flex_timer_start();
 #ifdef COMPUTE_KERNEL_GEMM

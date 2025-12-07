@@ -91,6 +91,11 @@ gemm-swd:gemm-pld
 	cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ${SH_DIR} sw
 	@echo "Running SoftHier simulation for GEMM ..."
 	pld=${CUR_DIR}/software/SummaGEMM/preload.elf cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ${SH_DIR} rund
+gemm-swv:gemm-pld
+	@echo "Compiling SoftHier software for GEMM ..."
+	cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ${SH_DIR} sw
+	@echo "Running SoftHier simulation for GEMM ..."
+	pld=${CUR_DIR}/software/SummaGEMM/preload.elf cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ${SH_DIR} runv pfto
 
 # Old preload-based workflow
 gemm-pre: gemm-clean gemm-cfg gemm-pld gemm-hs
@@ -153,7 +158,7 @@ gemv-hs:
 	@echo "Compiling SoftHier HW & software for GEMV ..."
 	cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ../../../../ hs
 
-gemv-sw:
+gemv-sw: gemv-cfg
 	@echo "Compiling SoftHier software for GEMV ..."
 	cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ${SH_DIR} sw
 	@echo "Running SoftHier simulation for GEMV ..."
@@ -219,8 +224,8 @@ VQ_CACHE_DIR ?= ${CUR_DIR}/vq_cache
 REPO_ID ?= ISTA-DASLab/Llama-2-7b-AQLM-2Bit-2x8-hf
 WEIGHT_FILE ?= model.safetensors
 LAYER_PREFIX ?= model.layers.0.mlp.down_proj
-VQ_K ?= 1024
-VQ_N ?= 512
+VQ_K ?= 2048
+VQ_N ?= 2048
 vq-download:
 	@echo "Downloading and extracting VQ model from HuggingFace..."
 	@mkdir -p ${VQ_CACHE_DIR}

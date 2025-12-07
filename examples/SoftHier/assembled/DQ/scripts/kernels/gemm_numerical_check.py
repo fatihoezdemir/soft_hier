@@ -36,13 +36,19 @@ def import_module_from_path(module_path):
     Dynamically import a module from an absolute path and mimic `from module import *`.
     """
     module_name = os.path.splitext(os.path.basename(module_path))[0]  # Extract the file name without extension
+    module_dir = os.path.dirname(module_path)
+
+    # Add module directory to sys.path for relative imports
+    if module_dir not in sys.path:
+        sys.path.insert(0, module_dir)
+
     spec = importlib.util.spec_from_file_location(module_name, module_path)
     if spec is None:
         raise ImportError(f"Cannot find a module at path: {module_path}")
-    
+
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    
+
     # Mimic `from module import *`
     globals().update(vars(module))
     return module

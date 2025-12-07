@@ -23,9 +23,9 @@
 #   |-----|   |-----|      |-----|
 #GEMV
 #      K         N            N
-#             |-----|      
+#             |-----|
 # 1 | x.T | x |  W  | K => |  Z  | 1
-#             |-----|      
+#             |-----|
 """
 X Matrix (M×K) - Distributed by ROWS:
      k0    k1    k2   ← K dimension partitions
@@ -58,124 +58,170 @@ m2│ Z20 │ Z21 │ Z22 │
   └─────┴─────┴─────┘
 """
 
-class SummaGEMV:
+try:
+    from .base_kernel import BaseKernel
+    from .algorithms import create_algorithm
+except ImportError:
+    # Fallback for dynamic imports
+    from base_kernel import BaseKernel
+    from algorithms import create_algorithm
 
-    def __init__(self):
 
-        #GEMM parameters
-        self.dtype                   = 'fp16'
-        self.m_size                  = 1
+class SummaGEMV(BaseKernel):
+
+    def __init__(self, **kwargs):
+        super().__init__()
+
+        # GEMV parameters - can be overridden via kwargs
+        self.dtype = kwargs.get('dtype', 'fp16')
+        self.m_size = kwargs.get('M', kwargs.get('m_size', 1))  # GEMV has M=1
         # Default to 4K columns to fully occupy 4 groups × 4 clusters (128-col tiles)
-        # Smaller N can be used, but split-N settings must be adjusted accordingly.
-        self.n_size                  = 1024
-        self.k_size                  = 512 
-        self.compute_kernel_gemm                    = None
-        self.compute_kernel_gemv                    = 1
+        self.n_size = kwargs.get('N', kwargs.get('n_size', 1024))
+        self.k_size = kwargs.get('K', kwargs.get('k_size', 1024))
+        self.compute_kernel_gemm = kwargs.get('compute_kernel_gemm', None)
+        self.compute_kernel_gemv = kwargs.get('compute_kernel_gemv', 1)
 
-        #Hyperparamters Settings
-        ## [Tile ]: tile size for each cluster
-        self.m_tile                  = 1
-        self.n_tile                  = 64 
-        self.k_tile                  = 128 // 1
-        ## [Scale]: How many clusters (x=scale, y=scale) are assigned one GEMM.
-        ##          For a set of clusters (x=scale, y=scale) we would call it **Group**
-        self.summa_scale_x           = 4
-        self.summa_scale_y           = 1
-        ## [Group]: How many summa group
-        ##          Do we need to reduce all groups
-        ##          Adress gaps between groups
-        self.summa_group_number      = 4
-        self.summa_group_reduce      = 0
-        self.summa_group_splitk      = 0
-        self.summa_group_splitn      = 1
-        self.summa_group_gap_x       = 0
-        self.summa_group_gap_w       = 0
-        self.summa_group_gap_z       = 0
-        ## [Resha]: Reshape options on input and output
-        self.resha_x_from_enable     = 0
-        self.resha_z_to_enable       = 0
-        self.resha_x_from_m          = 128
-        self.resha_z_to_m            = 2048
-        ## [Numer]: Whether to check numerical correctness
-        self.summa_numer             = 1
-        self.summa_numer_chunk       = 8192
+        # Tile sizes (GEMV-specific defaults)
+        self.m_tile = kwargs.get('m_tile', 1)   # M=1 for vector
+        self.n_tile = kwargs.get('n_tile', 64)
+        self.k_tile = kwargs.get('k_tile', 128)
 
-        # [VQ]: Vector Quantization Settings
-        self.vq_enabled                = 0
-        
-        self.vq_force_weight_load      = 0
-        self.vq_source                 = "gen"   # Source: "gen" (generated) or "dl" (downloaded)
-        self.vq_algorithm              = "aqlm"  # Algorithm: "aqlm", "vptq", etc.
-        self.vq_use_scales            = 1 if  self.vq_algorithm =="aqlm" else 0  # Whether to use per-group scales
-        self.vq_num_cb                 = 2 if  self.vq_algorithm =="aqlm" else 1      # Number of codebooks
-        self.vq_nbits_per_cb           = 8       # Bits per codebook index (2^8 = 256 centroids)
-        self.vq_group_size             = 8       # Centroid vector length (group size)
-        self.vq_cb_size                = 256     # Codebook size (number of centroids in each codebook)
-        self.compressed_dim            = "N"# Compressed dimension: "N"(columns ) or "K" (rows)
+        # SUMMA cluster configuration (GEMV-specific)
+        self.summa_scale_x = kwargs.get('summa_scale_x', 4)
+        self.summa_scale_y = kwargs.get('summa_scale_y', 1)  # Single row for GEMV
+
+        # SUMMA group configuration (GEMV uses split-N)
+        self.summa_group_number = kwargs.get('summa_group_number', 4)
+        self.summa_group_reduce = kwargs.get('summa_group_reduce', 0)
+        self.summa_group_splitk = kwargs.get('summa_group_splitk', 0)
+        self.summa_group_splitn = kwargs.get('summa_group_splitn', 1)  # GEMV uses split-N
+        self.summa_group_gap_x = 0
+        self.summa_group_gap_w = 0
+        self.summa_group_gap_z = 0
+
+        # Reshape options
+        self.resha_x_from_enable = kwargs.get('resha_x_from_enable', 0)
+        self.resha_z_to_enable = kwargs.get('resha_z_to_enable', 0)
+        self.resha_x_from_m = kwargs.get('resha_x_from_m', 128)
+        self.resha_z_to_m = kwargs.get('resha_z_to_m', 2048)
+
+        # Numerical verification
+        self.summa_numer = kwargs.get('summa_numer', 1)
+        self.summa_numer_chunk = kwargs.get('summa_numer_chunk', 256)
+
+        # VQ Configuration - auto-enable if using DQ/fused variants
+        kernel_variant_requested = kwargs.get('kernel_variant', None)
+        if kernel_variant_requested in ['dq', 'fused', 'splitk']:
+            self.vq_enabled = kwargs.get('vq_enabled', 1)  # Auto-enable VQ for DQ variants
+        else:
+            self.vq_enabled = kwargs.get('vq_enabled', 0)  # GEMV has VQ disabled by default
+
+        self.vq_force_weight_load = kwargs.get('vq_force_weight_load', 0)
+        self.vq_source = kwargs.get('vq_source', 'gen')  # "gen" or "dl"
+
+        # Create VQ algorithm instance via factory
+        vq_algorithm_name = kwargs.get('vq_algorithm', 'aqlm')
+        enable_transpose = kwargs.get('enable_transpose', False)
+        num_codebooks = kwargs.get('num_codebooks', 2 if vq_algorithm_name == 'aqlm' else 1)
+        cb_size = kwargs.get('cb_size', 256 if vq_algorithm_name == 'aqlm' else 4096)
+
+        self.vq_alg = create_algorithm(
+            vq_algorithm_name,
+            enable_transpose=enable_transpose,
+            num_codebooks=num_codebooks,
+            cb_size=cb_size
+        )
+
+        # Validate config against algorithm constraints
+        self.vq_alg.validate_config(kwargs)
+
+        # Extract algorithm-specific configs
+        self.vq_algorithm = vq_algorithm_name
+        self.vq_num_cb = self.vq_alg.get_num_codebooks()
+        self.vq_use_scales = self.vq_alg.get_use_scales()
+        self.vq_group_size = self.vq_alg.group_size
+        self.vq_nbits_per_cb = self.vq_alg.nbits_per_cb
+        self.vq_cb_size = self.vq_alg.cb_size
+
+        # Derived VQ parameters
+        self.compressed_dim = kwargs.get('compressed_dim', 'N')
         self.vq_num_groups_per_row_tile = int(self.n_tile / self.vq_group_size)
 
-        # Optional VQ features
-        self.vq_codebook_format        = "fp16"  # Codebook storage format
-        self.vq_index_format           = "separate" # for multicodebook only: Index format: "packed" or "separate" or "flattened"
+        # VQ format options
+        self.vq_codebook_format = kwargs.get('vq_codebook_format', 'fp16')
+        self.vq_index_format = kwargs.get('vq_index_format', 'separate')
 
-        # Pretrained model settings (optional)
-        self.vq_use_pretrained         = False   # Load from HuggingFace model
-        self.vq_repo_id                = "ISTA-DASLab/Llama-2-7b-AQLM-2Bit-2x8-hf"    # e.g., "ISTA-DASLab/Llama-2-7b-AQLM-PV-2Bit-2x8-hf"
-        self.vq_weight_file            = None    # e.g., "model.safetensors"
-        self.vq_layer_prefix           = None    # e.g., "model.layers.0.mlp.down_proj"
-        dtype_bytes = self._dtype_nbytes()
+        # Pretrained model settings
+        self.vq_use_pretrained = kwargs.get('vq_use_pretrained', False)
+        self.vq_repo_id = kwargs.get('vq_repo_id', 'ISTA-DASLab/Llama-2-7b-AQLM-2Bit-2x8-hf')
+        self.vq_weight_file = kwargs.get('vq_weight_file', None)
+        self.vq_layer_prefix = kwargs.get('vq_layer_prefix', None)
 
-        if self.summa_group_splitk > 0:
-            total_k_partitions = self.summa_group_number * self.summa_group_splitk
-            if total_k_partitions <= 1:
-                raise ValueError("SplitK requires summa_group_number * summa_group_splitk > 1.")
-            if self.k_size % total_k_partitions != 0:
-                raise ValueError(
-                    f"K dimension {self.k_size} must be divisible by summa_group_number*summa_group_splitk ({total_k_partitions})."
-                )
-            k_chunk = self.k_size // total_k_partitions
-            self.summa_group_gap_x = k_chunk * dtype_bytes
-            self.summa_group_gap_w = k_chunk * self.n_size * dtype_bytes
-            self.summa_group_gap_z = 0
-            self.summa_group_reduce = 1
+        # Kernel variant selection
+        # GEMV variants:
+        #  'baseline' - no DQ, standard REDMULE
+        #  'dq' - DQ-based, separate dequant (SPATZ) + compute (REDMULE)
+        #  'fused' - DQ-fused, SPATZ does both dequant+compute
+        #  'splitk' - K-parallel (for future, multi-core)
+        self.kernel_variant = kwargs.get('kernel_variant', 'fused' if self.vq_enabled else 'baseline')
 
+        # Setup split-K if enabled
+        self._setup_splitk()
+
+        # Validate alignment
         self._validate_alignment()
 
+    def get_kernel_function(self):
+        """Return C function name based on kernel variant."""
+        if self.kernel_variant == 'baseline':
+            return 'run_gemv_pipeline'
+        elif self.kernel_variant == 'dq':
+            return 'run_gemv_pipelinevq'
+        elif self.kernel_variant == 'fused':
+            return 'run_gemv_pipelinevq_fused'
+        elif self.kernel_variant == 'splitk':
+            return 'run_gemv_pipelinevq_splitk'
+        else:
+            raise ValueError(f"Unknown kernel_variant for GEMV: {self.kernel_variant}. Valid: 'baseline', 'dq', 'fused', 'splitk'")
+
     def _validate_alignment(self):
-        """catch invalid tilinglayout choices."""
-        m_block = self.summa_scale_y * self.m_tile
+        """Validate tile alignment (GEMV-specific)."""
+        # Skip M validation for GEMV since M=1
         n_block = self.summa_scale_x * self.n_tile
 
-
         if self.n_size % n_block != 0:
-            raise ValueError(f"N dimension {self.n_size} must be a multiple of summa_scale_x*n_tile ({n_block}).")
+            raise ValueError(
+                f"N dimension {self.n_size} must be a multiple of "
+                f"summa_scale_x*n_tile ({n_block})"
+            )
         if self.k_size % self.k_tile != 0:
-            raise ValueError(f"K dimension {self.k_size} must be a multiple of k_tile ({self.k_tile}).")
+            raise ValueError(
+                f"K dimension {self.k_size} must be a multiple of "
+                f"k_tile ({self.k_tile})"
+            )
+
+        # VQ-specific validation
         if self.n_tile % self.vq_group_size != 0:
-            raise ValueError(f"n_tile {self.n_tile} must be a multiple of VQ group size ({self.vq_group_size}).")
+            raise ValueError(
+                f"n_tile {self.n_tile} must be a multiple of "
+                f"VQ group size ({self.vq_group_size})"
+            )
+
+        # Split-N validation
         if self.summa_group_splitn:
             if self.n_size % self.summa_group_number != 0:
                 raise ValueError(
-                    f"SplitN requires N ({self.n_size}) divisible by summa_group_number ({self.summa_group_number})."
+                    f"SplitN requires N ({self.n_size}) divisible by "
+                    f"summa_group_number ({self.summa_group_number})"
                 )
             n_size_per_group = self.n_size // self.summa_group_number
             if n_size_per_group % n_block != 0:
                 raise ValueError(
-                    f"Pergroup N ({n_size_per_group}) must be a multiple of summa_scale_x*n_tile ({n_block}) "
-                    f"for split-N. Reduce summa_group_number or summa_scale_x or increase N."
+                    f"Per-group N ({n_size_per_group}) must be a multiple of "
+                    f"summa_scale_x*n_tile ({n_block}) for split-N. "
+                    f"Reduce summa_group_number or summa_scale_x or increase N."
                 )
 
-    def _dtype_nbytes(self):
-        dtype_bytes = {
-            'fp16': 2,
-            'fp8': 1,
-            'uint8': 1,
-            'int8': 1,
-            'fp32': 4,
-        }
-        if self.dtype not in dtype_bytes:
-            raise ValueError(f"Unsupported dtype '{self.dtype}' for gap calculation.")
-        return dtype_bytes[self.dtype]
 
 # Backward compat
 SummaGEMM = SummaGEMV

@@ -1,0 +1,37 @@
+"""
+Creating VQ algorithm instances.
+"""
+
+from .aqlm_algorithm import AQLMAlgorithm
+from .vptq_algorithm import VPTQAlgorithm
+
+
+def create_algorithm(algorithm_name, **kwargs):
+    """
+    Create a VQ algorithm.
+    Args:
+        algorithm_name: Name of algorithm ('aqlm', 'vptq', etc.)
+        **kwargs: algorithm-specific parameters
+    Returns:
+        VQAlgorithm instance
+    Example:
+        alg = create_algorithm('aqlm')
+        alg = create_algorithm('vptq', enable_transpose=True, cb_size=4096)
+    """
+
+    algorithm_name = algorithm_name.lower()
+
+    if algorithm_name == 'aqlm':
+        num_codebooks = kwargs.get('num_codebooks', 2)
+        return AQLMAlgorithm(num_codebooks=num_codebooks)
+
+    elif algorithm_name == 'vptq':
+        enable_transpose = kwargs.get('enable_transpose', False)
+        cb_size = kwargs.get('cb_size', 4096)
+        return VPTQAlgorithm(enable_transpose=enable_transpose, cb_size=cb_size)
+
+    else:#
+        raise ValueError(
+            f"Unknown VQ algorithm: {algorithm_name}. "
+            f"Supported algorithms: 'aqlm', 'vptq'"
+        )

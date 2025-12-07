@@ -36,13 +36,19 @@ def import_module_from_path(module_path):
     Dynamically import a module from an absolute path and mimic `from module import *`.
     """
     module_name = os.path.splitext(os.path.basename(module_path))[0]  # Extract the file name without extension
+    module_dir = os.path.dirname(module_path)
+
+    # Add module directory to sys.path for relative imports
+    if module_dir not in sys.path:
+        sys.path.insert(0, module_dir)
+
     spec = importlib.util.spec_from_file_location(module_name, module_path)
     if spec is None:
         raise ImportError(f"Cannot find a module at path: {module_path}")
-    
+
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    
+
     # Mimic `from module import *`
     globals().update(vars(module))
     return module
@@ -266,6 +272,7 @@ if __name__ == '__main__':
         nargs="+",
         help="Paths to Python modules to import (absolute or relative)."
     )
+    parser.add_argument("--kernel-variant", dest="kernel_variant", help="Kernel variant (baseline, dq, fused, splitk)")
 
     args = parser.parse_args()
 
@@ -287,11 +294,15 @@ if __name__ == '__main__':
 
     # Instantiate arch and gemm configurations
     # Auto-detect whether to use SummaGEMV or SummaGEMM
+    kwargs = {}
+    if args.kernel_variant:
+        kwargs['kernel_variant'] = args.kernel_variant
+
     if 'SummaGEMV' in globals():
-        gemm = globals()['SummaGEMV']()
+        gemm = globals()['SummaGEMV'](**kwargs)
         print("Using SummaGEMV configuration (GEMV mode)")
     elif 'SummaGEMM' in globals():
-        gemm = globals()['SummaGEMM']()
+        gemm = globals()['SummaGEMM'](**kwargs)
         print("Using SummaGEMM configuration (GEMM mode)")
     else:
         raise RuntimeError("Neither SummaGEMM nor SummaGEMV class found in the imported module")

@@ -18,6 +18,7 @@
 
 import re
 import os
+import sys
 import argparse
 import importlib.util
 import utils.kernel_configuration as kc
@@ -28,13 +29,19 @@ def import_module_from_path(module_path):
     Dynamically import a module from an absolute path and mimic `from module import *`.
     """
     module_name = os.path.splitext(os.path.basename(module_path))[0]  # Extract the file name without extension
+    module_dir = os.path.dirname(module_path)
+
+    # Add module directory to sys.path for relative imports
+    if module_dir not in sys.path:
+        sys.path.insert(0, module_dir)
+
     spec = importlib.util.spec_from_file_location(module_name, module_path)
     if spec is None:
         raise ImportError(f"Cannot find a module at path: {module_path}")
-    
+
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    
+
     # Mimic `from module import *`
     globals().update(vars(module))
     return module
@@ -42,6 +49,7 @@ def import_module_from_path(module_path):
 parser = argparse.ArgumentParser(description="Generate C header files from a GEMM configuration file.")
 parser.add_argument("input_file",  nargs="?", help="Path to GEMM configuration python file")
 parser.add_argument("output_file", nargs="?", help="Path to GEMM configuration C header file")
+parser.add_argument("--kernel-variant", dest="kernel_variant", help="Kernel variant (baseline, unfused, fused, splitk)")
 args = parser.parse_args()
 input_file = args.input_file
 
@@ -66,11 +74,15 @@ for module_path in [input_file]:
 
 # Generate the C header file
 # Auto-detect whether to use SummaGEMV or SummaGEMM
+kwargs = {}
+if args.kernel_variant:
+    kwargs['kernel_variant'] = args.kernel_variant
+
 if 'SummaGEMV' in globals():
-    gemm = globals()['SummaGEMV']()
+    gemm = globals()['SummaGEMV'](**kwargs)
     print("Using SummaGEMV configuration (GEMV mode)")
 elif 'SummaGEMM' in globals():
-    gemm = globals()['SummaGEMM']()
+    gemm = globals()['SummaGEMM'](**kwargs)
     print("Using SummaGEMM configuration (GEMM mode)")
 else:
     raise RuntimeError("Neither SummaGEMM nor SummaGEMV class found in the imported module")
@@ -138,5 +150,13 @@ if hasattr(gemm, 'vq_enabled') and gemm.vq_enabled:
     vq_defines = vq_utils.generate_vq_defines(gemm, header_prefix="")
     appendix.extend(vq_defines)
     print(f"Added {len(vq_defines)} VQ configuration defines")
+
+# Add kernel variant selection
+if hasattr(gemm, 'kernel_variant'):
+    kernel_func = gemm.get_kernel_function()
+    appendix.append(f"// Kernel variant: {gemm.kernel_variant}")
+    appendix.append(f"#define KERNEL_VARIANT_{gemm.kernel_variant.upper()} 1")
+    appendix.append(f"#define KERNEL_FUNCTION {kernel_func}")
+    print(f"Kernel variant: {gemm.kernel_variant} -> {kernel_func}")
 
 kc.generate_config_C_header("GEMM", gemm, C_header_file, gemm.dtype, gemm.summa_numer, gemm.vq_enabled, appendix=appendix)

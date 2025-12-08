@@ -1,6 +1,10 @@
 MAKEFILE_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 CUR_DIR := $(MAKEFILE_DIR)
 SH_DIR := $(realpath $(MAKEFILE_DIR)../../../..)
+
+# Python from virtual environment (bypasses conda PATH issues)
+PYTHON ?= $(SH_DIR)/pyenv_softhier/bin/python3
+
 # reprocucinility, deactivate for speedup
 # export CUBLAS_WORKSPACE_CONFIG := :4096:8
 # export OMP_NUM_THREADS := 1
@@ -168,7 +172,7 @@ gemv-swd:gemv-pld
 	cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ${SH_DIR} sw
 	@echo "Running SoftHier simulation for GEMV ..."
 	pld=${CUR_DIR}/software/SummaGEMM/preload.elf cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ${SH_DIR} rund
-gemv-swv:gemv-pld
+gemv-swv:gemv-cfg
 	@echo "Compiling SoftHier software for GEMV ..."
 	cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ${SH_DIR} sw
 	@echo "Running SoftHier simulation for GEMV ..."
@@ -237,17 +241,21 @@ vq-download:
 		--k_size ${VQ_K} \
 		--n_size ${VQ_N}
 
-# Generate VQ data using AQLM quantizer (for custom weights)
-# This generates random weights and quantizes them using AQLM
+# Generate VQ data using specified quantization algorithm
+# Supported algorithms: aqlm, vptq
+VQ_ALGORITHM ?= aqlm
 VQ_NUM_CB ?= 2
 VQ_NBITS_PER_CB ?= 8
 VQ_GROUP_SIZE ?= 8
+VQ_NUM_CENTROIDS ?= 4096
 VQ_MAX_EPOCHS ?= 20
 VQ_DEVICE ?= auto
 
 vq-generate:
-	@echo "Generating and quantizing weights using AQLM..."
+	@echo "Generating and quantizing weights using $(VQ_ALGORITHM)..."
 	@mkdir -p ${VQ_CACHE_DIR}
+ifeq ($(VQ_ALGORITHM),aqlm)
+	@echo "Using AQLM quantizer..."
 	python3 ${CUR_DIR}/scripts/quantizers/aqlm_quantizer.py \
 		--k_size ${VQ_K} \
 		--n_size ${VQ_N} \
@@ -257,6 +265,22 @@ vq-generate:
 		--max_epochs ${VQ_MAX_EPOCHS} \
 		--device ${VQ_DEVICE} \
 		--output_dir ${VQ_CACHE_DIR}
+else ifeq ($(VQ_ALGORITHM),vptq)
+	@echo "Using VPTQ quantizer (requires vptq-algo conda environment)..."
+	$$(conda info --base)/envs/vptq-algo/bin/python3 ${CUR_DIR}/scripts/quantizers/vptq_quantizer.py \
+		--k_size ${VQ_K} \
+		--n_size ${VQ_N} \
+		--num_codebooks 1 \
+		--group_size ${VQ_GROUP_SIZE} \
+		--num_centroids ${VQ_NUM_CENTROIDS} \
+		--max_epochs ${VQ_MAX_EPOCHS} \
+		--device ${VQ_DEVICE} \
+		--output_dir ${VQ_CACHE_DIR}
+else
+	@echo "ERROR: Unknown algorithm '$(VQ_ALGORITHM)'"
+	@echo "Supported algorithms: aqlm, vptq"
+	@exit 1
+endif
 
 # Check VQ cache status
 vq-status:
@@ -292,9 +316,18 @@ vq-help:
 	@echo "                   Variables: REPO_ID, WEIGHT_FILE, LAYER_PREFIX, VQ_K, VQ_N"
 	@echo "                   Saves to: aqlm_dl{config}_dim{K}x{N}_*.npy"
 	@echo ""
-	@echo "  vq-generate      Generate and quantize random weights using AQLM"
-	@echo "                   Variables: VQ_K, VQ_N, VQ_NUM_CB, VQ_NBITS_PER_CB, VQ_GROUP_SIZE, VQ_MAX_EPOCHS, VQ_DEVICE"
-	@echo "                   Saves to: aqlm_gen{config}_dim{K}x{N}_*.npy"
+	@echo "  vq-generate      Generate and quantize random weights"
+	@echo "                   Variables:"
+	@echo "                     VQ_ALGORITHM     - Algorithm to use (aqlm, vptq) [default: aqlm]"
+	@echo "                     VQ_K, VQ_N       - Matrix dimensions"
+	@echo "                     VQ_NUM_CB        - Number of codebooks (AQLM)"
+	@echo "                     VQ_NBITS_PER_CB  - Bits per codebook (AQLM)"
+	@echo "                     VQ_GROUP_SIZE    - Group size"
+	@echo "                     VQ_NUM_CENTROIDS - Number of centroids (VPTQ)"
+	@echo "                     VQ_MAX_EPOCHS    - Training epochs"
+	@echo "                     VQ_DEVICE        - Device (auto, cpu, cuda)"
+	@echo "                   AQLM saves to: aqlm_gen{config}_dim{K}x{N}_*.npy"
+	@echo "                   VPTQ saves to: vptq_gen{config}_dim{K}x{N}_*.npy"
 	@echo ""
 	@echo "  vq-status        Show VQ cache status"
 	@echo "  vq-clean         Clean VQ cache directory"
@@ -304,29 +337,33 @@ vq-help:
 	@echo "  gemm-vq-runv     Run GEMM with VQ (verbose, with waveforms)"
 	@echo ""
 	@echo "VQ Source Selection (config/kernels/gemm.py):"
-	@echo "  self.vq_source = \"gen\"    Use generated weights (aqlm_gen* files)"
-	@echo "  self.vq_source = \"dl\"     Use downloaded weights (aqlm_dl* files)"
+	@echo "  self.vq_source = \"gen\"    Use generated weights (*_gen* files)"
+	@echo "  self.vq_source = \"dl\"     Use downloaded weights (*_dl* files)"
 	@echo ""
 	@echo "Example workflows:"
-	@echo "  1. Generate VQ data and run:"
-	@echo "     make vq-generate"
+	@echo "  1. Generate VQ data using AQLM and run:"
+	@echo "     make vq-generate VQ_ALGORITHM=aqlm"
 	@echo "     # Set vq_source='gen' and vq_force_weight_load=1 in gemm.py"
 	@echo "     make gemm-vq-run"
 	@echo ""
-	@echo "  2. Download pretrained model and run:"
+	@echo "  2. Generate VQ data using VPTQ and run:"
+	@echo "     make vq-generate VQ_ALGORITHM=vptq VQ_GROUP_SIZE=6 VQ_NUM_CENTROIDS=4096"
+	@echo "     # Set vq_source='gen' and vq_force_weight_load=1 in gemm.py"
+	@echo "     make gemm-vq-run"
+	@echo ""
+	@echo "  3. Download pretrained model and run:"
 	@echo "     make vq-download REPO_ID=... LAYER_PREFIX=..."
 	@echo "     # Set vq_source='dl' and vq_force_weight_load=1 in gemm.py"
 	@echo "     make gemm-vq-run"
 	@echo ""
-	@echo "  3. Keep both and switch between them:"
-	@echo "     make vq-generate    # Creates aqlm_gen* files"
-	@echo "     make vq-download    # Creates aqlm_dl* files"
-	@echo "     # Toggle vq_source='gen' or 'dl' in gemm.py to switch"
-	@echo ""
 	@echo "Config Flags (config/kernels/gemm.py):"
-	@echo "  vq_enabled           = 0/1    # Enable VQ hardware support"
-	@echo "  vq_force_weight_load = 0/1    # Load VQ weights even if HW disabled"
-	@echo "  vq_source            = gen/dl # Select generated or downloaded weights"
+	@echo "  vq_enabled           = 0/1         # Enable VQ hardware support"
+	@echo "  vq_force_weight_load = 0/1         # Load VQ weights even if HW disabled"
+	@echo "  vq_source            = gen/dl      # Select generated or downloaded weights"
+	@echo ""
+	@echo "Quantization Algorithms:"
+	@echo "  aqlm  - Additive Quantization (no special dependencies)"
+	@echo "  vptq  - Vector Product Quantization (requires vptq-algo conda environment)"
 
 # ============================================================================
 # VQ Debugging Targets

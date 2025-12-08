@@ -7,3 +7,7 @@
 [submodule "examples/SoftHier/assembled/DQ/third_party/aqlm"]
 	path = examples/SoftHier/assembled/DQ/third_party/aqlm
 	url = https://github.com/Vahe1994/AQLM.git
+[submodule "examples/SoftHier/assembled/DQ/third_party/VPTQ"]
+	path = examples/SoftHier/assembled/DQ/third_party/VPTQ
+	url = https://github.com/microsoft/VPTQ.git
+	branch = algorithm

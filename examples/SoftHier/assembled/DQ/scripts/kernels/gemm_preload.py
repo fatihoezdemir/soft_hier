@@ -27,8 +27,16 @@ import argparse
 import numpy as np
 import importlib.util
 from tqdm import tqdm
-import preload as pld
+
+# Add paths for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+# Add flex_cluster_utilities for preload module
+
+
+SH_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../../..'))
+sys.path.insert(0, os.path.join(SH_DIR, 'soft_hier', 'flex_cluster_utilities'))
+
+import preload as pld
 from quantizers.vq_data_handler import VQDataHandler, VQConfig
 
 def import_module_from_path(module_path):
@@ -67,6 +75,9 @@ def gen_vq_preload_data(gemm):
 
     # Initialize VQ handler
     vq_handler = VQDataHandler(vq_config)
+
+    # Get transpose engine setting from algorithm (VPTQ-specific)
+    enable_transpose = getattr(gemm.vq_alg, 'enable_transpose', False)
 
     # Check if we should load from pretrained or cache
     cache_dir = os.path.join(os.path.dirname(__file__), '../../vq_cache')
@@ -130,7 +141,7 @@ def gen_vq_preload_data(gemm):
         print("For accurate numerical testing, use real quantized weights via 'make vq-download'.")
 
     # Prepare data for preload
-    vq_data = vq_handler.prepare_for_preload(dtype=gemm.dtype)
+    vq_data = vq_handler.prepare_for_preload(dtype=gemm.dtype, enable_transpose=enable_transpose)
 
     return vq_data, vq_handler.W_reconstructed
 

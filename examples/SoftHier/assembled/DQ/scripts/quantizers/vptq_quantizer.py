@@ -281,9 +281,13 @@ def quantize_weight(k_size, n_size, group_size=6, num_centroids=4096,
 
     print("\n--- Component Details ---")
     print("Main codebooks:", {k: (v.shape if v is not None else None) for k, v in C_main.items()})
+    print("Main codebooks dtype:", {k: (v.dtype if v is not None else None) for k, v in C_main.items()})
+
     print("Residual codebooks:", {k: (v.shape if v is not None else None) for k, v in C_res.items()})
-    print("Indices shapes:", {k: (v.shape if v is not None else None) for k, v in idx_main.items()})
     print("Residual idx shapes:", {k: (v.shape if v is not None else None) for k, v in idx_res.items()})
+    print("Indices :", {k: (v if v is not None else None) for k, v in idx_main.items()})
+    print("Indices  dtype:", {k: (v.dtype if v is not None else None) for k, v in idx_main.items()})
+    print("Indices  shape:", {k: (v.shape if v is not None else None) for k, v in idx_main.items()})
 
     # Compute compression ratio
     original_size = num_parameters * 32  # 32 bits per float32
@@ -291,15 +295,33 @@ def quantize_weight(k_size, n_size, group_size=6, num_centroids=4096,
     compression_ratio = original_size / compressed_size
     print(f"\nCompression ratio: {compression_ratio:.2f}x")
 
+    # Normalize dtypes for downstream handling: fp16 codebooks, uint16 indices
+    codebooks_fp16 = {
+        k: (v.detach().cpu().to(torch.float16).numpy() if v is not None else None)
+        for k, v in C_main.items()
+    }
+    indices_u16 = {
+        k: (v.detach().cpu().to(torch.int64).numpy().astype(np.uint16) if v is not None else None)
+        for k, v in idx_main.items()
+    }
+    res_codebooks_fp16 = {
+        k: (v.detach().cpu().to(torch.float16).numpy() if v is not None else None)
+        for k, v in C_res.items()
+    }
+    res_indices_u16 = {
+        k: (v.detach().cpu().to(torch.int64).numpy().astype(np.uint16) if v is not None else None)
+        for k, v in idx_res.items()
+    }
+
     return {
         'W_original': W.detach().cpu().numpy(),
         'W_reconstructed': What.detach().cpu().numpy(),
-        'codebooks': C_main,
-        'indices': idx_main,
-        'res_codebooks': C_res,
-        'res_indices': idx_res,
-        'weight_scale': weight_scale,
-        'weight_bias': weight_bias,
+        'codebooks': codebooks_fp16,
+        'indices': indices_u16,
+        'res_codebooks': res_codebooks_fp16,
+        'res_indices': res_indices_u16,
+        'weight_scale': weight_scale.detach().cpu().numpy() if weight_scale is not None else None,
+        'weight_bias': weight_bias.detach().cpu().numpy() if weight_bias is not None else None,
         'bits_per_param': bits_per_param,
         'compression_ratio': compression_ratio,
         'weight_error': (w_num.item(), w_den.item(), w_rel.item()),
@@ -326,30 +348,36 @@ def save_quantized_data(results, output_dir, k_size, n_size, num_codebooks=1, gr
     np.save(w_orig_path, results['W_original'])
     np.save(w_hat_path, results['W_reconstructed'])
 
-    # Save codebooks and indices for each group
-    for k, v in results['codebooks'].items():
-        if v is not None:
-            np.save(cb_path, v.detach().cpu().numpy())
+    #  main codebook/indices in compact types (fp16 / uint16)
+    main_cb = next((v for v in results['codebooks'].values() if v is not None), None)
+    main_idx = next((v for v in results['indices'].values() if v is not None), None)
+    if main_cb is None or main_idx is None:
+        raise RuntimeError("Missing main codebook or indices in VPTQ results")
 
-    for k, v in results['indices'].items():
-        if v is not None:
-            np.save(idx_path, v.detach().cpu().numpy())
+    np.save(cb_path, main_cb.astype(np.float16, copy=False))
+    np.save(idx_path, main_idx.astype(np.uint16, copy=False))
 
+    # Save residuals if present (kept separate for debugging)
     if results['res_codebooks']:
         for k, v in results['res_codebooks'].items():
             if v is not None:
-                np.save(f'vptq_codebook_res_{k}.npy', v.detach().cpu().numpy())
+                np.save(f'vptq_codebook_res_{k}.npy', v.astype(np.float16, copy=False))
 
     if results['res_indices']:
         for k, v in results['res_indices'].items():
             if v is not None:
-                np.save(f'vptq_indices_res_{k}.npy', v.detach().cpu().numpy())
+                np.save(f'vptq_indices_res_{k}.npy', v.astype(np.uint16, copy=False))
 
     # Save scale and bias if present
     if results['weight_scale'] is not None:
-        np.save('vptq_weight_scale.npy', results['weight_scale'].detach().cpu().numpy())
+        np.save('vptq_weight_scale.npy', results['weight_scale'])
     if results['weight_bias'] is not None:
-        np.save('vptq_weight_bias.npy', results['weight_bias'].detach().cpu().numpy())
+        np.save('vptq_weight_bias.npy', results['weight_bias'])
+
+    # VPTQ doesn't use per-row scales like AQLM, so save dummy scales (all ones)
+    # for compatibility with vq handler ( todo change)
+    dummy_scales = np.ones(k_size, dtype=np.float16)
+    np.save(scales_path, dummy_scales)
 
     print("\n--- Saved Files ---")
     print(f"Codebooks:     {cb_path}")

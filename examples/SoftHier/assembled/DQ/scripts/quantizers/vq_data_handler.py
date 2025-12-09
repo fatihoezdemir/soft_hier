@@ -154,22 +154,52 @@ class VQDataHandler:
                        indices_path: str,
                        scales_path: str,
                        w_hat_path: Optional[str] = None) -> None:
-        '''Load from numpy files'''
-        self.codebooks = np.load(codebooks_path)
+        '''Load from numpy files - handles both AQLM and VPTQ formats'''
+        cb = np.load(codebooks_path)
         idx = np.load(indices_path)
-        # int8 -> uint8 for indexing (aqlm llama uses int8)
+
+        # Convert int8 -> uint8 for indexing (aqlm llama uses int8)
         if idx.dtype == np.int8:
-            self.indices = idx.view(np.uint8)
+            idx = idx.view(np.uint8)
             print("Converted int8 -> uint8")
+
+        # Handle different formats:
+        # AQLM indices: (K, num_groups, num_codebooks) - 3D array
+        # VPTQ indices: (num_groups, K) - 2D array
+        # AQLM codebooks: (num_codebooks, num_centroids, out_group_size, in_group_size) - 4D
+        # VPTQ codebooks: (num_centroids, group_size) - 2D
+
+        if idx.ndim == 2 and cb.ndim == 2:
+            print(f"Detected VPTQ format:")
+            print(f"  Codebooks: {cb.shape} (num_centroids, group_size)")
+            print(f"  Indices: {idx.shape} (num_groups, K)")
+
+            # VPTQ indices: (num_groups, K) -> (K, num_groups, 1)
+            idx = idx.T[:, :, np.newaxis]
+
+            # VPTQ codebooks: (num_centroids, group_size) -> (1, num_centroids, group_size)
+            # Reshape to match generic VQ format: (num_codebooks=1, num_centroids, group_size)
+            cb = cb[np.newaxis, :, :]
+
+            print(f"Converted to standard format:")
+            print(f"  Codebooks: {cb.shape} (num_codebooks, num_centroids, group_size)")
+            print(f"  Indices: {idx.shape} (K, num_groups, num_codebooks)")
+        elif idx.ndim == 3 and cb.ndim == 4:
+            print(f"Detected AQLM format:")
+            print(f"  Codebooks: {cb.shape} (num_codebooks, num_centroids, out_gs, in_gs)")
+            print(f"  Indices: {idx.shape} (K, num_groups, num_codebooks)")
         else:
-            self.indices = idx
+            raise ValueError(f"Unexpected format: codebooks {cb.ndim}D, indices {idx.ndim}D")
+
+        self.codebooks = cb
+        self.indices = idx
         self.scales = np.load(scales_path)
 
         if w_hat_path is not None:
             self.W_reconstructed = np.load(w_hat_path)
 
         print("Loaded VQ data:")
-        print(f"  Codebooks: {self.codebooks.shape}")
+        print(f"  Codebooks: {self.codebooks.shape} dtype :{self.codebooks.dtype}")
         print(f"  Indices: {self.indices.shape}, dtype: {self.indices.dtype}")
         print(f"  Scales: {self.scales.shape}")
 
@@ -256,18 +286,34 @@ class VQDataHandler:
         self.W_reconstructed = W
         return W
 
-    def prepare_for_preload(self, dtype: str = 'fp16') -> Dict[str, np.ndarray]:
-        '''Prepare VQ data for preload'''
+    def prepare_for_preload(self, dtype: str = 'fp16', enable_transpose: bool = False) -> Dict[str, np.ndarray]:
+        '''Prepare VQ data for preload
+
+        Args:
+            dtype: Data type for conversion ('fp16' or 'fp8')
+            enable_transpose: If True, transpose indices from (K, num_groups, C) to (num_groups, K, C)
+                             This is useful for VPTQ to improve memory access patterns.
+        '''
         if self.W_reconstructed is None:
             self.dequantize()
 
         # flatten codebooks
         cb_flat = np.concatenate([cb.reshape(-1) for cb in self.codebooks])
 
+        # Apply transpose if requested (for better memory access patterns)
+        # Original: (K, num_groups, num_codebooks)
+        # Transposed: (num_groups, K, num_codebooks)
+        indices_to_use = self.indices
+        if enable_transpose:
+            print(f"Transposing indices matrix: {self.indices.shape} -> ", end="")
+            # Transpose first two dimensions: (K, num_groups, num_cb) -> (num_groups, K, num_cb)
+            indices_to_use = np.transpose(self.indices, (1, 0, 2))
+            print(f"{indices_to_use.shape}")
+
         # prepare indices - multiple formats
-        if self.indices.ndim == 3:
-            idx0 = self.indices[:, :, 0].astype(np.uint8)
-            idx1 = self.indices[:, :, 1].astype(np.uint8) if self.indices.shape[2] > 1 else None
+        if indices_to_use.ndim == 3:
+            idx0 = indices_to_use[:, :, 0].astype(np.uint8)
+            idx1 = indices_to_use[:, :, 1].astype(np.uint8) if indices_to_use.shape[2] > 1 else None
 
             # packed: idx1 << 8 | idx0
             if idx1 is not None:
@@ -276,8 +322,8 @@ class VQDataHandler:
                 idx_packed = idx0.astype(np.uint16)
 
             # flattened
-            idx_flat = np.concatenate([self.indices[:, :, i].astype(np.uint8)
-                                      for i in range(self.indices.shape[2])])
+            idx_flat = np.concatenate([indices_to_use[:, :, i].astype(np.uint8)
+                                      for i in range(indices_to_use.shape[2])])
         else:
             raise NotImplementedError("only 3D indices")
 
@@ -305,10 +351,12 @@ class VQDataHandler:
             codebooks_split.append(cb_i)
 
         # Split indices into separate arrays (one per codebook)
-        # indices shape: (K, num_groups, num_codebooks)
+        # Note: indices_to_use may be transposed if enable_transpose=True
+        # Original shape: (K, num_groups, num_codebooks)
+        # Transposed shape: (num_groups, K, num_codebooks)
         indices_split = []
         for i in range(num_cbs):
-            idx_i = self.indices[:, :, i].astype(np.uint8)
+            idx_i = indices_to_use[:, :, i].astype(np.uint8)
             indices_split.append(idx_i)
 
         return {

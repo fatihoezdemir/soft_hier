@@ -18,11 +18,12 @@ class VPTQAlgorithm(VQAlgorithm):
 
         # VPTQ-specific defaults
         self.num_codebooks = 1                  # Single codebook
-        self.group_size = 8                     # Elements per centroid (can be larger)
+        self.group_size = 6                     # Elements per centroid (can be larger)
         self.nbits_per_cb = 12                  # 2^12 = 4096 centroids (can be larger than AQLM)
         self.cb_size = cb_size                  # Number of centroids
         self.use_scales = True                  # VPTQ uses per-row scales
         self.enable_transpose = enable_transpose
+        self.idx_bytes=2
 
     def get_num_codebooks(self):
         return 1  # VPTQ always uses single codebook

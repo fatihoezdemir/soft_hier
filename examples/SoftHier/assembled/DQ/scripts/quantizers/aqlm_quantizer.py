@@ -132,6 +132,7 @@ def quantize_weight(k_size, n_size, num_codebooks=2, nbits_per_codebook=8,
     print("\n--- Quantization Results ---")
     logger.info(f"Codes shape: {quantized_weight.get_codes().shape}")
     logger.info(f"Codebooks shape: {quantized_weight.get_codebooks().squeeze().shape}")
+    logger.info(f"Codebooks dtype: {quantized_weight.get_codebooks().squeeze().dtype}")
     if quantized_weight.scales is not None:
         logger.info(f"Scales shape: {quantized_weight.get_scales().squeeze().shape}")
 
@@ -139,7 +140,7 @@ def quantize_weight(k_size, n_size, num_codebooks=2, nbits_per_codebook=8,
     What = quantized_weight()
     logger.info(f"Reconstructed weight shape: {What.shape}")
 
-    # reconstruction error
+    # reconstruction error of float32 codebooks
     (w_num, w_den, w_rel), (y_num, y_den, y_rel), _ = recon_error(W, What, device=device, dtype=dtype)
     print("\n--- Reconstruction Error ---")
     logger.info(f"Weight-space  squared: {w_num.item():.6f}  normalized: {w_rel.item():.6f}")

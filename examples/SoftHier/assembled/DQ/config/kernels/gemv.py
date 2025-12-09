@@ -76,15 +76,15 @@ class SummaGEMV(BaseKernel):
         self.dtype = kwargs.get('dtype', 'fp16')
         self.m_size = kwargs.get('M', kwargs.get('m_size', 1))  # GEMV has M=1
         # Default to 4K columns to fully occupy 4 groups × 4 clusters (128-col tiles)
-        self.n_size = kwargs.get('N', kwargs.get('n_size', 1024))
-        self.k_size = kwargs.get('K', kwargs.get('k_size', 1024))
+        self.n_size = kwargs.get('N', kwargs.get('n_size', 1024*2))
+        self.k_size = kwargs.get('K', kwargs.get('k_size', 1024*2))
         self.compute_kernel_gemm = kwargs.get('compute_kernel_gemm', None)
         self.compute_kernel_gemv = kwargs.get('compute_kernel_gemv', 1)
 
         # Tile sizes (GEMV-specific defaults)
         self.m_tile = kwargs.get('m_tile', 1)   # M=1 for vector
-        self.n_tile = kwargs.get('n_tile', 64)
-        self.k_tile = kwargs.get('k_tile', 128)
+        self.n_tile = kwargs.get('n_tile', 64*2)
+        self.k_tile = kwargs.get('k_tile', 128*2)
 
         # SUMMA cluster configuration (GEMV-specific)
         self.summa_scale_x = kwargs.get('summa_scale_x', 4)
@@ -111,20 +111,38 @@ class SummaGEMV(BaseKernel):
 
         # VQ Configuration - auto-enable if using DQ/fused variants
         kernel_variant_requested = kwargs.get('kernel_variant', None)
-        if kernel_variant_requested in ['dq', 'fused', 'splitk']:
+        if kernel_variant_requested in ['dq', 'fused', 'splitk','baseline']:
             self.vq_enabled = kwargs.get('vq_enabled', 1)  # Auto-enable VQ for DQ variants
         else:
-            self.vq_enabled = kwargs.get('vq_enabled', 0)  # GEMV has VQ disabled by default
+            self.vq_enabled = kwargs.get('vq_enabled', 1)  # GEMV has VQ disabled by default
 
         self.vq_force_weight_load = kwargs.get('vq_force_weight_load', 0)
         self.vq_source = kwargs.get('vq_source', 'gen')  # "gen" or "dl"
 
         # Create VQ algorithm instance via factory
+        #
+        # VPTQ Transpose Feature:
+        # - enable_transpose=True: Transpose indices from (K, num_groups, 1) to (num_groups, K, 1)
+        # - Only useful for VPTQ (baseline) with transpose engine, not needed for AQLM
+        #   Example: gemv = SummaGEMV(vq_algorithm='vptq', enable_transpose=True)
         vq_algorithm_name = kwargs.get('vq_algorithm', 'aqlm')
         enable_transpose = kwargs.get('enable_transpose', False)
         num_codebooks = kwargs.get('num_codebooks', 2 if vq_algorithm_name == 'aqlm' else 1)
         cb_size = kwargs.get('cb_size', 256 if vq_algorithm_name == 'aqlm' else 4096)
 
+        # Kernel variant selection
+        # GEMV variants:
+        #  'baseline' - no DQ, standard REDMULE
+        #  'dq' - DQ-based, separate dequant (SPATZ) + compute (REDMULE)
+        #  'fused' - DQ-fused, SPATZ does both dequant+compute
+        #  'splitk' - K-parallel (for future, multi-core)
+        self.kernel_variant = kwargs.get('kernel_variant', 'baseline' if self.vq_enabled else 'baseline')
+
+        # For baseline + VPTQ, default to enabling transpose to match HW access patterns
+        if self.kernel_variant == 'baseline' and vq_algorithm_name == 'vptq':
+            enable_transpose = kwargs.get('enable_transpose', True)
+
+        # Instantiate algorithm before validation
         self.vq_alg = create_algorithm(
             vq_algorithm_name,
             enable_transpose=enable_transpose,
@@ -156,14 +174,6 @@ class SummaGEMV(BaseKernel):
         self.vq_repo_id = kwargs.get('vq_repo_id', 'ISTA-DASLab/Llama-2-7b-AQLM-2Bit-2x8-hf')
         self.vq_weight_file = kwargs.get('vq_weight_file', None)
         self.vq_layer_prefix = kwargs.get('vq_layer_prefix', None)
-
-        # Kernel variant selection
-        # GEMV variants:
-        #  'baseline' - no DQ, standard REDMULE
-        #  'dq' - DQ-based, separate dequant (SPATZ) + compute (REDMULE)
-        #  'fused' - DQ-fused, SPATZ does both dequant+compute
-        #  'splitk' - K-parallel (for future, multi-core)
-        self.kernel_variant = kwargs.get('kernel_variant', 'fused' if self.vq_enabled else 'baseline')
 
         # Setup split-K if enabled
         self._setup_splitk()
@@ -201,7 +211,7 @@ class SummaGEMV(BaseKernel):
             )
 
         # VQ-specific validation
-        if self.n_tile % self.vq_group_size != 0:
+        if self.vq_alg.get_algorithm_name()!='vptq' and self.n_tile % self.vq_group_size != 0:
             raise ValueError(
                 f"n_tile {self.n_tile} must be a multiple of "
                 f"VQ group size ({self.vq_group_size})"

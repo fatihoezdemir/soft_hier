@@ -23,7 +23,7 @@ class AQLMAlgorithm(VQAlgorithm):
         self.cb_size = 256                  # Number of centroids
         self.use_scales = True              # AQLM always uses per-row scales
         self.enable_transpose = False       # AQLM is row-wise only
-
+        self.idx_bytes=1
     def get_num_codebooks(self):
         return self.num_codebooks
 

@@ -260,10 +260,10 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
     info.L1_X2 = off; off += info.L1_X_size;
     info.L1_Z1 = off; off += info.L1_Z_size; //
     info.L1_Z2 = off; off += info.L1_Z_size; //
-    #ifndef KERNEL_VARIANT_FUSED
+    // #ifndef KERNEL_VARIANT_FUSED
     info.L1_W1 = off; off += info.L1_W_size; //
     info.L1_W2 = off;    off += info.L1_W_size; //
-    #endif
+    // #endif
 #if VQ_ENABLED == 1
     // Copy codebook addresses array
     for (int i = 0; i < VQ_NUM_CBS; i++) {

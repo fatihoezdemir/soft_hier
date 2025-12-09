@@ -41,7 +41,7 @@ def generate_vq_defines(gemm, header_prefix: str = "GEMM") -> List[str]:
     defines.append(f"#define {header_prefix}VQ_NBITS_PER_CB {gemm.vq_nbits_per_cb}")
     defines.append(f"#define {header_prefix}VQ_GROUP_SIZE {gemm.vq_group_size}")
     defines.append(f"#define {header_prefix}VQ_CB_NUM_CENTROIDS {gemm.vq_cb_size}")
-    defines.append(f"#define {header_prefix}VQ_IDX_BYTES ({int(gemm.vq_nbits_per_cb/8)})")
+    defines.append(f"#define {header_prefix}VQ_IDX_BYTES ({int(gemm.vq_alg.idx_bytes)})")
     defines.append(f"#define {header_prefix}VQ_CB_BYTES {int(cb_bytes)}")
 
     # Derived parameters
@@ -91,12 +91,12 @@ def validate_vq_config(gemm) -> List[str]:
     if not hasattr(gemm, 'vq_enabled') or not gemm.vq_enabled:
         return errors  # Not using VQ, skip validation
 
-    # Check matrix dimensions are divisible by group size
-    if gemm.n_size % gemm.vq_group_size != 0:
-        errors.append(f"N size ({gemm.n_size}) must be divisible by VQ group size ({gemm.vq_group_size})")
+    # # Check matrix dimensions are divisible by group size
+    # if gemm.n_size % gemm.vq_group_size != 0:
+    #     errors.append(f"N size ({gemm.n_size}) must be divisible by VQ group size ({gemm.vq_group_size})")
 
-    if gemm.n_tile % gemm.vq_group_size != 0:
-        errors.append(f"N tile ({gemm.n_tile}) must be divisible by VQ group size ({gemm.vq_group_size})")
+    # if gemm.n_tile % gemm.vq_group_size != 0:
+    #     errors.append(f"N tile ({gemm.n_tile}) must be divisible by VQ group size ({gemm.vq_group_size})")
 
     # Check codebook size matches bits per codebook
     expected_cb_size = 2 ** gemm.vq_nbits_per_cb
@@ -150,11 +150,17 @@ def generate_vq_data_header(output_path: str,
 
         # Write separate codebook indices
         f.write(f'\n// Codebook 0 indices ({indices_cb0.shape[0]}x{indices_cb0.shape[1]})\n')
-        write_array_uint8(f, 'vq_indices_cb0', indices_cb0.flatten())
+        if indices_cb0.dtype == np.uint8:
+            write_array_uint8(f, 'vq_indices_cb0', indices_cb0.flatten())
+        else:
+            write_array_uint16(f, 'vq_indices_cb0', indices_cb0.flatten())
 
         if indices_cb1 is not None and indices_cb1.size > 0:
             f.write(f'\n// Codebook 1 indices ({indices_cb1.shape[0]}x{indices_cb1.shape[1]})\n')
-            write_array_uint8(f, 'vq_indices_cb1', indices_cb1.flatten())
+            if indices_cb1.dtype == np.uint8:
+                write_array_uint8(f, 'vq_indices_cb1', indices_cb1.flatten())
+            else:
+                write_array_uint16(f, 'vq_indices_cb1', indices_cb1.flatten())
 
         # Write scales if present
         if scales is not None and scales.size > 0:

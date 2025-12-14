@@ -26,37 +26,6 @@
 #             |-----|
 # 1 | x.T | x |  W  | K => |  Z  | 1
 #             |-----|
-"""
-X Matrix (M×K) - Distributed by ROWS:
-     k0    k1    k2   ← K dimension partitions
-  ┌─────┬─────┬─────┐
-m0│ X00 │ X01 │ X02 │ ← Row 0 clusters
-  ├─────┼─────┼─────┤
-m1│ X10 │ X11 │ X12 │ ← Row 1 clusters
-  ├─────┼─────┼─────┤
-m2│ X20 │ X21 │ X22 │ ← Row 2 clusters
-  └─────┴─────┴─────┘
-
-W Matrix (K×N) - Distributed by COLUMNS:
-     n0    n1    n2   ← N dimension partitions
-  ┌─────┬─────┬─────┐
-k0│ W00 │ W01 │ W02 │ ← K partition 0
-  ├─────┼─────┼─────┤
-k1│ W10 │ W11 │ W12 │ ← K partition 1
-  ├─────┼─────┼─────┤
-k2│ W20 │ W21 │ W22 │ ← K partition 2
-  └─────┴─────┴─────┘
-
-Z Matrix (M×N) - Each cluster computes ONE tile:
-     n0    n1    n2
-  ┌─────┬─────┬─────┐
-m0│ Z00 │ Z01 │ Z02 │
-  ├─────┼─────┼─────┤
-m1│ Z10 │ Z11 │ Z12 │
-  ├─────┼─────┼─────┤
-m2│ Z20 │ Z21 │ Z22 │
-  └─────┴─────┴─────┘
-"""
 
 try:
     from .base_kernel import BaseKernel
@@ -94,7 +63,7 @@ class SummaGEMV(BaseKernel):
         self.summa_group_number = kwargs.get('summa_group_number', 4)
         self.summa_group_reduce = kwargs.get('summa_group_reduce', 0)
         self.summa_group_splitk = kwargs.get('summa_group_splitk', 0)
-        self.summa_group_splitn = kwargs.get('summa_group_splitn', 1)  # GEMV uses split-N
+        self.summa_group_splitn = kwargs.get('summa_group_splitn', 1)  # GEMV uses split-N 
         self.summa_group_gap_x = 0
         self.summa_group_gap_w = 0
         self.summa_group_gap_z = 0
@@ -126,8 +95,6 @@ class SummaGEMV(BaseKernel):
         #   Example: gemv = SummaGEMV(vq_algorithm='vptq', enable_transpose=True)
         vq_algorithm_name = kwargs.get('vq_algorithm', 'aqlm')
         enable_transpose = kwargs.get('enable_transpose', False)
-        num_codebooks = kwargs.get('num_codebooks', 2 if vq_algorithm_name == 'aqlm' else 1)
-        cb_size = kwargs.get('cb_size', 256 if vq_algorithm_name == 'aqlm' else 4096)
 
         # Kernel variant selection
         # GEMV variants:
@@ -145,15 +112,12 @@ class SummaGEMV(BaseKernel):
         self.vq_alg = create_algorithm(
             vq_algorithm_name,
             enable_transpose=enable_transpose,
-            num_codebooks=num_codebooks,
-            cb_size=cb_size
         )
 
         # Validate config against algorithm constraints
         self.vq_alg.validate_config(kwargs)
 
         # Derived VQ parameters
-        # self.compressed_dim = kwargs.get('compressed_dim', 'n')
         self.vq_num_groups_per_row_tile = int(self.n_tile / self.vq_alg.group_size)
 
         # Pretrained model settings
@@ -162,11 +126,9 @@ class SummaGEMV(BaseKernel):
         self.vq_weight_file = kwargs.get('vq_weight_file', None)
         self.vq_layer_prefix = kwargs.get('vq_layer_prefix', None)
 
-        # Setup split-K if enabled
-        self._setup_splitk()
 
-        # Validate alignment
-        self._validate_alignment()
+        self._setup_splitk() # Setup split-K if enabled
+        self._validate_alignment()         # Validate alignment
 
     def get_kernel_function(self):
         """Return C function name based on kernel variant."""
@@ -201,7 +163,7 @@ class SummaGEMV(BaseKernel):
         if self.vq_alg.get_algorithm_name()!='vptq' and self.n_tile % self.vq_alg.group_size != 0:
             raise ValueError(
                 f"n_tile {self.n_tile} must be a multiple of "
-                f"VQ group size ({self.vq_group_size})"
+                f"VQ group size ({self.vq_alg.group_size})"
             )
 
         # Split-N validation

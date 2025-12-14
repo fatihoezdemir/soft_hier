@@ -65,7 +65,6 @@ class AQLMAlgorithm(VQAlgorithm):
         # Check that we have at least 1 codebook
         if self.num_codebooks < 1:
             raise ValueError(f"AQLM requires at least 1 codebook, got {self.num_codebooks}")
-
         # Typically AQLM uses 2 codebooks, warn if different
         if self.num_codebooks != 2:
             print(f"Warning: AQLM typically uses 2 codebooks, you're using {self.num_codebooks}")

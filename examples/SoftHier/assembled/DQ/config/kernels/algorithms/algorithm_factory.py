@@ -23,6 +23,7 @@ def create_algorithm(algorithm_name, **kwargs):
 
     if algorithm_name == 'aqlm':
         num_codebooks = kwargs.get('num_codebooks', 2)
+        cb_size = kwargs.get('cb_size', 256)
         return AQLMAlgorithm(num_codebooks=num_codebooks)
 
     elif algorithm_name == 'vptq':

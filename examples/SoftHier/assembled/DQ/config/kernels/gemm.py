@@ -121,9 +121,6 @@ class SummaGEMM(BaseKernel):
         vq_algorithm_name = kwargs.get('vq_algorithm', 'aqlm')
         enable_transpose = kwargs.get('enable_transpose', False)
 
-        num_codebooks = kwargs.get('num_codebooks', 2 if vq_algorithm_name == 'aqlm' else 1)
-        cb_size = kwargs.get('cb_size', 256 if vq_algorithm_name == 'aqlm' else 4096)
-        
         # Kernel variant selection
         # GEMV variants:
         #  'baseline' - no DQ, standard REDMULE
@@ -136,8 +133,6 @@ class SummaGEMM(BaseKernel):
         self.vq_alg = create_algorithm(
             vq_algorithm_name,
             enable_transpose=enable_transpose,
-            num_codebooks=num_codebooks,
-            cb_size=cb_size
         )
 
         # Validate config against algorithm constraints
@@ -159,8 +154,7 @@ class SummaGEMM(BaseKernel):
 
         # Kernel variant selection
         # GEMM only has: 'baseline' (no DQ) or 'dq' (DQ-based with REDMULE)
-        self.kernel_variant = kwargs.get('kernel_variant', 'baseline' if self.vq_enabled else 'baseline')
-
+        # self.kernel_variant = kwargs.get('kernel_variant', 'baseline' if self.vq_enabled else 'baseline')
         # Setup split-K if enabled
         self._setup_splitk()
 

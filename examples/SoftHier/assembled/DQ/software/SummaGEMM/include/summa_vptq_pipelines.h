@@ -1,0 +1,5 @@
+#ifndef SUMMA_VPTQ_PIPELINES_HH
+#define SUMMA_VPTQ_PIPELINES_HH
+
+
+#endif

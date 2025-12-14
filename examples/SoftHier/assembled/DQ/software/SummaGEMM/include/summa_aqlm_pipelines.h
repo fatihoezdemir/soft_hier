@@ -2,6 +2,8 @@
 #define SUMMA_AQLM_PIPELINES_HH
 
 #if VQ_ENABLED == 1
+#include "gemm.h"
+#include "gemm_setup.h"
 static inline void run_gemv_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32_t* DMA_L1_Z, uint32_t* REDMULE_L1_Z) {
     const int tiles      = info->K_iter;
     const int SPATZ_CORE = 2;

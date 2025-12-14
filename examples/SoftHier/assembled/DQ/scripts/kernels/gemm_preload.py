@@ -68,9 +68,10 @@ def gen_vq_preload_data(gemm):
     vq_config = VQConfig(
         k_size=gemm.k_size,
         n_size=gemm.n_size,
-        num_codebooks=gemm.vq_num_cb,
-        nbits_per_codebook=gemm.vq_nbits_per_cb,
-        in_group_size=gemm.vq_group_size,
+        num_codebooks=gemm.vq_alg.get_num_codebooks(),
+        nbits_per_codebook=gemm.vq_alg.nbits_per_cb,
+        in_group_size=gemm.vq_alg.group_size,
+        compress_dim=getattr(gemm, 'vq_compress_dim', 'n'),
     )
 
     # Initialize VQ handler

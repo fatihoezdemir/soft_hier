@@ -18,17 +18,20 @@ class AQLMAlgorithm(VQAlgorithm):
 
         # AQLM-specific defaults
         self.num_codebooks = num_codebooks  # Typically 2
+        self.codebook_format = 'fp16'
         self.group_size = 8                 # Elements per centroid
         self.nbits_per_cb = 8               # 2^8 = 256 centroids
         self.cb_size = 256                  # Number of centroids
         self.use_scales = True              # AQLM always uses per-row scales
         self.enable_transpose = False       # AQLM is row-wise only
-        self.idx_bytes=1
+        self.compress_dim = 'n'
+        self.idx_bytes = 1
+        self.index_format ='separate'
     def get_num_codebooks(self):
         return self.num_codebooks
 
     def get_use_scales(self):
-        return True  # AQLM always uses scales
+        return self.use_scales  # AQLM always uses scales
 
     def get_buffer_requirements(self):
         """

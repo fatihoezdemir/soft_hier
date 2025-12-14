@@ -43,6 +43,7 @@ class VQConfig:
     codebook_value_nbits: int = 16  # 16 = no cb quant
     codebook_value_num_groups: int = 1
     scale_nbits: int = 0  # 0 = no scales
+    compress_dim: str = 'n'  # 'n' (columns) or 'k' (rows)
 
     # model source
     use_pretrained: bool = False
@@ -172,22 +173,32 @@ class VQDataHandler:
         if idx.ndim == 2 and cb.ndim == 2:
             print(f"Detected VPTQ format:")
             print(f"  Codebooks: {cb.shape} (num_centroids, group_size)")
-            print(f"  Indices: {idx.shape} (num_groups, K)")
-
-            # VPTQ indices: (num_groups, K) -> (K, num_groups, 1)
-            idx = idx.T[:, :, np.newaxis]
+            print(f"  Indices: {idx.shape}")
 
             # VPTQ codebooks: (num_centroids, group_size) -> (1, num_centroids, group_size)
-            # Reshape to match generic VQ format: (num_codebooks=1, num_centroids, group_size)
             cb = cb[np.newaxis, :, :]
 
-            print(f"Converted to standard format:")
-            print(f"  Codebooks: {cb.shape} (num_codebooks, num_centroids, group_size)")
-            print(f"  Indices: {idx.shape} (K, num_groups, num_codebooks)")
+            if self.cfg.compress_dim == 'k':
+                # Indices: (Kc, N) -> (Kc, N, 1)
+                idx = idx[:, :, np.newaxis]
+                print(f"  Compress-dim=K: indices kept as (Kc, N, 1): {idx.shape}")
+            else:
+                # VPTQ indices: (num_groups, K) -> (K, num_groups, 1)
+                idx = idx.T[:, :, np.newaxis]
+                print(f"Converted to standard format:")
+                print(f"  Codebooks: {cb.shape} (num_codebooks, num_centroids, group_size)")
+                print(f"  Indices: {idx.shape} (K, num_groups, num_codebooks)")
         elif idx.ndim == 3 and cb.ndim == 4:
             print(f"Detected AQLM format:")
             print(f"  Codebooks: {cb.shape} (num_codebooks, num_centroids, out_gs, in_gs)")
             print(f"  Indices: {idx.shape} (K, num_groups, num_codebooks)")
+        elif idx.ndim == 3 and cb.ndim == 3:
+            # AQLM path but codebooks were saved without the out_group_size dimension
+            print(f"Detected AQLM (squeezed) format:")
+            print(f"  Codebooks: {cb.shape} (num_codebooks, num_centroids, in_gs)")
+            print(f"  Indices: {idx.shape} (K, num_groups, num_codebooks)")
+            cb = cb[:, :, np.newaxis, :]  # Expand out_gs=1
+            print(f"  Expanded codebooks to: {cb.shape} (num_codebooks, num_centroids, out_gs=1, in_gs)")
         else:
             raise ValueError(f"Unexpected format: codebooks {cb.ndim}D, indices {idx.ndim}D")
 
@@ -207,6 +218,10 @@ class VQDataHandler:
         '''Dequantize: reconstruct W from codebooks and indices'''
         if self.codebooks is None or self.indices is None:
             raise RuntimeError("need to load data first")
+
+        # Special-case K-compressed layout (VPTQ)
+        if getattr(self.cfg, 'compress_dim', 'n') == 'k':
+            return self._dequantize_k_compressed()
 
         # detect format
         if self.codebooks.ndim == 4:
@@ -282,6 +297,38 @@ class VQDataHandler:
                     vals *= scale
 
                 W[i, j*gs:(j+1)*gs] = vals.astype(np.float16)
+
+        self.W_reconstructed = W
+        return W
+
+    def _dequantize_k_compressed(self) -> np.ndarray:
+        '''Dequantize when indices are stored as (Kc, N) (row-compressed VPTQ)'''
+        if self.codebooks is None or self.indices is None:
+            raise RuntimeError("need to load data first")
+        if self.codebooks.ndim != 3:
+            raise ValueError("K-compressed dequant expects 3D codebooks (num_cb, num_centroids, group_size)")
+
+        num_cb, num_centroids, gs = self.codebooks.shape
+        K = self.cfg.k_size
+        N = self.indices.shape[1]
+
+        W = np.zeros((K, N), dtype=np.float16)
+
+        for kc in range(self.indices.shape[0]):
+            k_base = kc * gs
+            for n in range(N):
+                code = self.indices[kc, n, 0]
+                vals = np.zeros(gs, dtype=np.float32)
+                for cb in range(num_cb):
+                    vals += self.codebooks[cb, code, :]
+                # Optional per-row scale: scale indexed by original row
+                if self.scales is not None and self.scales.size > 0:
+                    row_idx = min(k_base, self.scales.shape[0] - 1)
+                    vals *= self.scales[row_idx]
+                for i in range(gs):
+                    k_out = k_base + i
+                    if k_out < K:
+                        W[k_out, n] = vals[i]
 
         self.W_reconstructed = W
         return W
@@ -387,5 +434,3 @@ class VQDataHandler:
                     self.W_reconstructed)
 
         print(f"Saved to {self.cache_dir}")
-
-

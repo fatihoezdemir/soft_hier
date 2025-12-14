@@ -1,4 +1,4 @@
-#
+ #
 # Copyright (C) 2025 ETH Zurich and University of Bologna
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -76,14 +76,14 @@ class SummaGEMV(BaseKernel):
         self.dtype = kwargs.get('dtype', 'fp16')
         self.m_size = kwargs.get('M', kwargs.get('m_size', 1))  # GEMV has M=1
         # Default to 4K columns to fully occupy 4 groups × 4 clusters (128-col tiles)
-        self.n_size = kwargs.get('N', kwargs.get('n_size', 1024*2))
-        self.k_size = kwargs.get('K', kwargs.get('k_size', 1024*2))
+        self.n_size = kwargs.get('N', kwargs.get('n_size', 1024))
+        self.k_size = kwargs.get('K', kwargs.get('k_size', 1024))
         self.compute_kernel_gemm = kwargs.get('compute_kernel_gemm', None)
         self.compute_kernel_gemv = kwargs.get('compute_kernel_gemv', 1)
 
         # Tile sizes (GEMV-specific defaults)
         self.m_tile = kwargs.get('m_tile', 1)   # M=1 for vector
-        self.n_tile = kwargs.get('n_tile', 64*2)
+        self.n_tile = kwargs.get('n_tile', 64)
         self.k_tile = kwargs.get('k_tile', 128*2)
 
         # SUMMA cluster configuration (GEMV-specific)
@@ -120,7 +120,6 @@ class SummaGEMV(BaseKernel):
         self.vq_source = kwargs.get('vq_source', 'gen')  # "gen" or "dl"
 
         # Create VQ algorithm instance via factory
-        #
         # VPTQ Transpose Feature:
         # - enable_transpose=True: Transpose indices from (K, num_groups, 1) to (num_groups, K, 1)
         # - Only useful for VPTQ (baseline) with transpose engine, not needed for AQLM
@@ -153,21 +152,9 @@ class SummaGEMV(BaseKernel):
         # Validate config against algorithm constraints
         self.vq_alg.validate_config(kwargs)
 
-        # Extract algorithm-specific configs
-        self.vq_algorithm = vq_algorithm_name
-        self.vq_num_cb = self.vq_alg.get_num_codebooks()
-        self.vq_use_scales = self.vq_alg.get_use_scales()
-        self.vq_group_size = self.vq_alg.group_size
-        self.vq_nbits_per_cb = self.vq_alg.nbits_per_cb
-        self.vq_cb_size = self.vq_alg.cb_size
-
         # Derived VQ parameters
-        self.compressed_dim = kwargs.get('compressed_dim', 'N')
-        self.vq_num_groups_per_row_tile = int(self.n_tile / self.vq_group_size)
-
-        # VQ format options
-        self.vq_codebook_format = kwargs.get('vq_codebook_format', 'fp16')
-        self.vq_index_format = kwargs.get('vq_index_format', 'separate')
+        # self.compressed_dim = kwargs.get('compressed_dim', 'n')
+        self.vq_num_groups_per_row_tile = int(self.n_tile / self.vq_alg.group_size)
 
         # Pretrained model settings
         self.vq_use_pretrained = kwargs.get('vq_use_pretrained', False)
@@ -211,7 +198,7 @@ class SummaGEMV(BaseKernel):
             )
 
         # VQ-specific validation
-        if self.vq_alg.get_algorithm_name()!='vptq' and self.n_tile % self.vq_group_size != 0:
+        if self.vq_alg.get_algorithm_name()!='vptq' and self.n_tile % self.vq_alg.group_size != 0:
             raise ValueError(
                 f"n_tile {self.n_tile} must be a multiple of "
                 f"VQ group size ({self.vq_group_size})"

@@ -125,36 +125,64 @@ static inline void summa_vq_load_scales(SummaGEMMInfo* info, uint32_t dst_L1_Sca
 // Loads all codebooks' indices to their separate double buffers
 static inline void summa_vq_load_indices(SummaGEMMInfo* info, int buffer_idx, int m, int n, int k) {
     (void)m;
-    // Use pre-computed values from setup
-    uint32_t N_compressed      = info->vq.N_compressed;
-    uint32_t N_tile_compressed = info->vq.N_tile_compressed;
-    uint32_t tile_col_index    = n * info->summa_group_x + info->cluster_in_group_id_x;
-    // Add group offset for split-N support
-    uint32_t group_start = info->vq.N_group_offset_compressed + tile_col_index * N_tile_compressed;
-    uint32_t row_start   = k * info->K_tile;
+    if (VQ_COMPRESS_K) {
+        // Indices layout: (Kc, N) for now assume multicodebook too for vptq
+        uint32_t K_tile_comp = info->vq.K_tile_compressed;
+        uint32_t tile_col_index = n * info->summa_group_x + info->cluster_in_group_id_x;
+        uint32_t col_start = tile_col_index * info->N_tile;
+        uint32_t row_start_comp = (k * info->K_tile) / VQ_GROUP_SIZE;
 
-    // Load indices from separate arrays (one per codebook) to separate L1 buffers
-    for (int cb = 0; cb < VQ_NUM_CBS; ++cb) {
-        // Each codebook has its own indices array with shape (K, N/VQ_GROUP_SIZE)
-        uint64_t src_offset = ((uint64_t)row_start * N_compressed + group_start) * VQ_IDX_BYTES;
-        uint32_t dst_offset = (buffer_idx == 0) ? info->vq.L1_IDX1[cb] : info->vq.L1_IDX2[cb];
+        for (int cb = 0; cb < VQ_NUM_CBS; ++cb) {
+            uint64_t src_offset = ((uint64_t)row_start_comp * info->N_size + col_start) * VQ_IDX_BYTES;
+            uint32_t dst_offset = (buffer_idx == 0) ? info->vq.L1_IDX1[cb] : info->vq.L1_IDX2[cb];
 
-        flex_dma_async_2d(dst_offset, info->vq.VQ_Index_address[cb] + src_offset,
-                          N_tile_compressed * VQ_IDX_BYTES, // transfer width per row
-                          N_tile_compressed * VQ_IDX_BYTES, // destination stride (compact)
-                          N_compressed * VQ_IDX_BYTES,      // source stride (full width)
-                          info->K_tile);                    // number of rows
-                          flex_dma_async_wait_all();
+            flex_dma_async_2d(dst_offset, info->vq.VQ_Index_address[cb] + src_offset,
+                              info->N_tile * VQ_IDX_BYTES,  // width (N_tile)
+                              info->N_tile * VQ_IDX_BYTES,  // dst stride
+                              info->N_size * VQ_IDX_BYTES,  // src stride
+                              K_tile_comp);                 // rows = K_compressed
+            flex_dma_async_wait_all();
+        }
+
+        // Broadcast column-wise
+        for (int cb = 0; cb < VQ_NUM_CBS; ++cb) {
+            uint32_t dst_offset = (buffer_idx == 0) ? info->vq.L1_IDX1[cb] : info->vq.L1_IDX2[cb];
+            flex_dma_async_broadcast(dst_offset, dst_offset, info->vq.L1_IDX_size,
+                                     (ARCH_NUM_CLUSTER_X - 1), info->group.wakeup_col_mask);
+        }
+        flex_dma_async_wait_all();
+    } else {
+        // AQLM-style N-compressed
+        uint32_t N_compressed      = info->vq.N_compressed;
+        uint32_t N_tile_compressed = info->vq.N_tile_compressed;
+        uint32_t tile_col_index    = n * info->summa_group_x + info->cluster_in_group_id_x;
+        // Add group offset for split-N support
+        uint32_t group_start = info->vq.N_group_offset_compressed + tile_col_index * N_tile_compressed;
+        uint32_t row_start   = k * info->K_tile;
+
+        // Load indices from separate arrays (one per codebook) to separate L1 buffers
+        for (int cb = 0; cb < VQ_NUM_CBS; ++cb) {
+            // Each codebook has its own indices array with shape (K, N/VQ_GROUP_SIZE)
+            uint64_t src_offset = ((uint64_t)row_start * N_compressed + group_start) * VQ_IDX_BYTES;
+            uint32_t dst_offset = (buffer_idx == 0) ? info->vq.L1_IDX1[cb] : info->vq.L1_IDX2[cb];
+
+            flex_dma_async_2d(dst_offset, info->vq.VQ_Index_address[cb] + src_offset,
+                              N_tile_compressed * VQ_IDX_BYTES, // transfer width per row
+                              N_tile_compressed * VQ_IDX_BYTES, // destination stride (compact)
+                              N_compressed * VQ_IDX_BYTES,      // source stride (full width)
+                              info->K_tile);                    // number of rows
+            flex_dma_async_wait_all();
+        }
+
+        // Broadcast all codebook indices COLUMN-wise (like W matrix) - indices move down columns
+        for (int cb = 0; cb < VQ_NUM_CBS; ++cb) {
+            uint32_t dst_offset = (buffer_idx == 0) ? info->vq.L1_IDX1[cb] : info->vq.L1_IDX2[cb];
+            flex_dma_async_broadcast(dst_offset, dst_offset, info->vq.L1_IDX_size,
+                                     (ARCH_NUM_CLUSTER_X - 1),     // row_mask
+                                     info->group.wakeup_col_mask); // col_mask
+        }
+        flex_dma_async_wait_all();
     }
-
-    // Broadcast all codebook indices COLUMN-wise (like W matrix) - indices move down columns
-    for (int cb = 0; cb < VQ_NUM_CBS; ++cb) {
-        uint32_t dst_offset = (buffer_idx == 0) ? info->vq.L1_IDX1[cb] : info->vq.L1_IDX2[cb];
-        flex_dma_async_broadcast(dst_offset, dst_offset, info->vq.L1_IDX_size,
-                                 (ARCH_NUM_CLUSTER_X - 1),     // row_mask
-                                 info->group.wakeup_col_mask); // col_mask
-    }
-    flex_dma_async_wait_all();
 }
 
 #endif

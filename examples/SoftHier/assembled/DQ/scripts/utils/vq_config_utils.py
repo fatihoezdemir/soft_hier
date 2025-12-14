@@ -34,19 +34,46 @@ def generate_vq_defines(gemm, header_prefix: str = "GEMM") -> List[str]:
     # Algorithm type
     if hasattr(gemm, 'vq_algorithm'):
         defines.append(f"#define {header_prefix}VQ_ALGORITHM_{gemm.vq_algorithm.upper()}")
-    cb_bytes= 2 if gemm.vq_codebook_format == "fp16" else 1
+    cb_bytes= 2 if gemm.vq_alg.codebook_format == "fp16" else 1
 
+    compress_dim_k = getattr(gemm, 'vq_compress_dim', 'n') == 'k'
+
+        # self.vq_num_cb = self.vq_alg.get_num_codebooks()
     # Core VQ parameters
-    defines.append(f"#define {header_prefix}VQ_NUM_CBS {gemm.vq_num_cb}")
-    defines.append(f"#define {header_prefix}VQ_NBITS_PER_CB {gemm.vq_nbits_per_cb}")
-    defines.append(f"#define {header_prefix}VQ_GROUP_SIZE {gemm.vq_group_size}")
-    defines.append(f"#define {header_prefix}VQ_CB_NUM_CENTROIDS {gemm.vq_cb_size}")
+    defines.append(f"#define {header_prefix}VQ_NUM_CBS {gemm.vq_alg.get_num_codebooks()}")
+    defines.append(f"#define {header_prefix}VQ_NBITS_PER_CB {gemm.vq_alg.nbits_per_cb}")
+    defines.append(f"#define {header_prefix}VQ_GROUP_SIZE {gemm.vq_alg.group_size}")
+    defines.append(f"#define {header_prefix}VQ_CB_NUM_CENTROIDS {gemm.vq_alg.cb_size}")
     defines.append(f"#define {header_prefix}VQ_IDX_BYTES ({int(gemm.vq_alg.idx_bytes)})")
     defines.append(f"#define {header_prefix}VQ_CB_BYTES {int(cb_bytes)}")
+    if getattr(gemm.vq_alg, 'enable_transpose', False):
+        defines.append(f"#define {header_prefix}VQ_TRANSPOSE_ENABLED 1")
+    else:
+        defines.append(f"#define {header_prefix}VQ_TRANSPOSE_ENABLED 0")
+    if compress_dim_k:
+        defines.append(f"#define {header_prefix}VQ_COMPRESS_K 1")
+        defines.append(f"#define {header_prefix}VQ_COMPRESS_N 0")
+    else:
+        defines.append(f"#define {header_prefix}VQ_COMPRESS_K 0")
+        defines.append(f"#define {header_prefix}VQ_COMPRESS_N 1")
 
-    # Derived parameters
-    num_groups_per_row = gemm.n_size // gemm.vq_group_size
-    total_groups = gemm.k_size * num_groups_per_row
+    # Derived parameters (compressed counts)
+    def ceil_div(x, y):
+        return (x + y - 1) // y
+
+    k_comp = ceil_div(gemm.k_size, gemm.vq_group_size) if compress_dim_k else gemm.k_size
+    k_comp_tile = ceil_div(gemm.k_tile, gemm.vq_group_size) if compress_dim_k else gemm.k_tile
+    n_comp = ceil_div(gemm.n_size, gemm.vq_alg.group_size) if not compress_dim_k else gemm.n_size
+    n_comp_tile = ceil_div(gemm.n_tile, gemm.vq_alg.group_size) if not compress_dim_k else gemm.n_tile
+
+    defines.append(f"#define {header_prefix}VQ_K_COMPRESSED ((uint64_t){k_comp})")
+    defines.append(f"#define {header_prefix}VQ_K_TILE_COMPRESSED ((uint64_t){k_comp_tile})")
+    defines.append(f"#define {header_prefix}VQ_N_COMPRESSED ((uint64_t){n_comp})")
+    defines.append(f"#define {header_prefix}VQ_N_TILE_COMPRESSED ((uint64_t){n_comp_tile})")
+
+    # Legacy-style row/col group counts (AQLM row-wise)
+    num_groups_per_row = n_comp if not compress_dim_k else 1
+    total_groups = gemm.k_size * num_groups_per_row if not compress_dim_k else k_comp * gemm.n_size
 
     defines.append(f"#define {header_prefix}VQ_NUM_GROUPS_PER_ROW ((uint64_t){num_groups_per_row})")
     defines.append(f"#define {header_prefix}VQ_TOTAL_GROUPS ((uint64_t){total_groups})")
@@ -55,23 +82,25 @@ def generate_vq_defines(gemm, header_prefix: str = "GEMM") -> List[str]:
     if hasattr(gemm, 'vq_num_groups_per_row_tile'):
         defines.append(f"#define {header_prefix}VQ_NUM_GROUPS_PER_ROW_TILE ((uint64_t){gemm.vq_num_groups_per_row_tile})")
     else:
-        num_groups_per_row_tile = gemm.n_tile // gemm.vq_group_size
+        num_groups_per_row_tile = n_comp_tile if not compress_dim_k else 1
         defines.append(f"#define {header_prefix}VQ_NUM_GROUPS_PER_ROW_TILE ((uint64_t){num_groups_per_row_tile})")
 
     # Scales (if used)
-    if hasattr(gemm, 'vq_use_scales') and gemm.vq_use_scales:
+    if hasattr(gemm.vq_alg, 'use_scales') and gemm.vq_alg.use_scales:
         defines.append(f"#define {header_prefix}VQ_USE_SCALES 1")
         defines.append(f"#define {header_prefix}VQ_NUM_SCALES {gemm.k_size}")
     else:
+        defines.append(f"#define {header_prefix}VQ_USE_SCALES 0")
+        defines.append(f"#define {header_prefix}VQ_NUM_SCALES 0")
         defines.append(f"#define {header_prefix}VQ_HAS_SCALES 0")
 
     # Codebook storage format
-    if hasattr(gemm, 'vq_codebook_format'):
-        defines.append(f"#define {header_prefix}VQ_CODEBOOK_FORMAT_{gemm.vq_codebook_format.upper()}")
+    if hasattr(gemm.vq_alg, 'codebook_format'):
+        defines.append(f"#define {header_prefix}VQ_CODEBOOK_FORMAT_{gemm.vq_alg.codebook_format.upper()}")
 
     # Index storage format
-    if hasattr(gemm, 'vq_index_format'):
-        defines.append(f"#define {header_prefix}VQ_INDEX_FORMAT_{gemm.vq_index_format.upper()}")
+    if hasattr(gemm.vq_alg, 'index_format'):
+        defines.append(f"#define {header_prefix}VQ_INDEX_FORMAT_{gemm.vq_alg.index_format.upper()}")
 
     return defines
 
@@ -99,8 +128,8 @@ def validate_vq_config(gemm) -> List[str]:
     #     errors.append(f"N tile ({gemm.n_tile}) must be divisible by VQ group size ({gemm.vq_group_size})")
 
     # Check codebook size matches bits per codebook
-    expected_cb_size = 2 ** gemm.vq_nbits_per_cb
-    if gemm.vq_cb_size != expected_cb_size:
+    expected_cb_size = 2 ** gemm.vq_alg.nbits_per_cb
+    if gemm.vq_alg.cb_size != expected_cb_size:
         errors.append(f"VQ codebook size ({gemm.vq_cb_size}) doesn't match 2^nbits ({expected_cb_size})")
 
     # Check K dimension matches N dimension (for quantized weight matrix)
@@ -111,7 +140,7 @@ def validate_vq_config(gemm) -> List[str]:
 
     # Validate tile alignment
     if hasattr(gemm, 'vq_num_groups_per_row_tile'):
-        expected = gemm.n_tile // gemm.vq_group_size
+        expected = gemm.n_tile // gemm.vq_alg.group_size
         if gemm.vq_num_groups_per_row_tile != expected:
             errors.append(f"VQ groups per row tile ({gemm.vq_num_groups_per_row_tile}) doesn't match n_tile/group_size ({expected})")
 

@@ -43,8 +43,14 @@ int main() {
         ,
         (uint64_t[VQ_NUM_CBS])VQ_CODEBOOKS_ADDRS, (uint64_t[VQ_NUM_CBS])VQ_INDICES_ADDRS, VQ_SCALES_ADDR,
         VQ_CB_NUM_CENTROIDS,
-        VQ_NUM_SCALES, // correct it , idx size
-        VQ_NUM_SCALES  // correct it , scale size
+        /* idx_size */ (GEMM_N_TILE / VQ_GROUP_SIZE) * GEMM_K_TILE * VQ_IDX_BYTES,
+        /* scale_size */ (
+#if defined(VQ_USE_SCALES) && (VQ_USE_SCALES == 1)
+            GEMM_K_TILE * VQ_CB_BYTES
+#else
+            0
+#endif
+        )
 #endif
     );
     flex_global_barrier_xy();
@@ -84,6 +90,7 @@ int main() {
         printf("    Scale[0]:    L1: 0x%05lx   Size: %-5lu bytes\n", info.vq.L1_Scales[0], L1_scales_size);
         printf("    Scale[1]:    L1: 0x%05lx   Size: %-5lu bytes\n", info.vq.L1_Scales[1], L1_scales_size);
         printf("                 HBM: 0x%08lx\n", info.vq.VQ_Scale_address);
+        printf("    Scale size:   %lu bytes\n", info.vq.scale_size);
         printf("------------------------------------------------------------\n");
 #endif
         printf("  VQ Configuration:\n");
@@ -91,7 +98,6 @@ int main() {
                VQ_GROUP_SIZE * VQ_CB_BYTES);
         printf("    IDX size:     %lu bytes (%d compressed x %d tile)\n", info.vq.idx_size, info.vq.N_tile_compressed,
                info.K_tile);
-        printf("    Scale size:   %lu bytes\n", info.vq.scale_size);
         printf("    Group size:   %d\n", VQ_GROUP_SIZE);
         printf("    N_compressed: %lu (N_tile: %lu)\n", info.vq.N_compressed, info.vq.N_tile_compressed);
         printf("------------------------------------------------------------\n");
@@ -112,7 +118,7 @@ int main() {
 #ifdef COMPUTE_KERNEL_GEMM
     SummaGEMMRun(&info);
 #endif
-#ifdef COMPUTE_KERNEL_GEMV 1
+#if defined(COMPUTE_KERNEL_GEMV)
     SummaGEMVRun(&info);
 #endif
     if (flex_get_core_id() == 0 && flex_get_cluster_id() == 0)

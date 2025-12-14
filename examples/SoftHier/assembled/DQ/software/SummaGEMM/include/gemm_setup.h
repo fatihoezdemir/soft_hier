@@ -25,17 +25,20 @@ typedef struct VQ {
     uint32_t L1_Scales[2];
 #endif
     // Pre-computed constants to avoid recomputation during load
-    uint32_t N_compressed;              // N_size / VQ_GROUP_SIZE (full stride)
-    uint32_t N_tile_compressed;         // N_tile / VQ_GROUP_SIZE
-    uint32_t N_compressed_per_group;    // (N_size_per_group) / VQ_GROUP_SIZE
-    uint32_t N_group_offset_compressed; // group_n_offset / VQ_GROUP_SIZE
+    uint32_t N_compressed;              // N_size / VQ_GROUP_SIZE (full stride) or plain N for K-compressed
+    uint32_t N_tile_compressed;         // N_tile / VQ_GROUP_SIZE or N_tile for K-compressed
+    uint32_t N_compressed_per_group;    // (N_size_per_group) / VQ_GROUP_SIZE (split-N)
+    uint32_t N_group_offset_compressed; // group_n_offset / VQ_GROUP_SIZE (split-N)
+    uint32_t K_compressed;              // ceil(K_size / VQ_GROUP_SIZE) for K-compressed
+    uint32_t K_tile_compressed;         // ceil(K_tile / VQ_GROUP_SIZE) for K-compressed
 } vq;
 
 #endif
 
 static inline void summa_config_assert(uint32_t condition, uint32_t eoc_code) {
     if (!condition) {
-        printf("exitin");
+        // if(flex_get_cluster_id()==1)
+            printf("exiting, error %lx", eoc_code );
         flex_eoc(eoc_code);
         while (1) {
         }
@@ -182,11 +185,11 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
         summa_config_assert((K_size % K_tile) == 0, 0xE00A);
     }
 #if VQ_ENABLED == 1
-    summa_config_assert((N_tile % VQ_GROUP_SIZE) == 0, 0xE00B);
+    // summa_config_assert((N_tile % VQ_GROUP_SIZE) == 0, 0xE00B);
 #endif
     const uint32_t n_size_per_group = group_splitN ? (N_size / num_group) : N_size;
 #if VQ_ENABLED == 1
-    summa_config_assert((n_size_per_group % VQ_GROUP_SIZE) == 0, 0xE00C);
+    // summa_config_assert((n_size_per_group % VQ_GROUP_SIZE) == 0, 0xE00C);
 #endif
 
     // Group infomation
@@ -281,12 +284,25 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
     info.vq.scale_size = info.K_tile * VQ_CB_BYTES;
 
     // Pre-compute constants to avoid recomputation during loads
-    info.vq.N_compressed              = info.N_size / VQ_GROUP_SIZE;
-    info.vq.N_compressed_per_group    = info.N_size_per_group / VQ_GROUP_SIZE;
-    info.vq.N_group_offset_compressed = info.group_splitN ? (info.group_n_offset / VQ_GROUP_SIZE) : 0;
-    info.vq.N_tile_compressed         = info.N_tile / VQ_GROUP_SIZE;
+    if (VQ_COMPRESS_K) {
+        info.vq.K_compressed           = (info.K_size + VQ_GROUP_SIZE - 1) / VQ_GROUP_SIZE;
+        info.vq.K_tile_compressed      = (info.K_tile + VQ_GROUP_SIZE - 1) / VQ_GROUP_SIZE;
+        info.vq.N_compressed           = info.N_size;  // not compressed
+        info.vq.N_tile_compressed      = info.N_tile;  // not compressed
+        info.vq.N_compressed_per_group = info.N_size_per_group; // unchanged
+        info.vq.N_group_offset_compressed = info.group_splitN ? info.group_n_offset : 0;
+    } else {//Compress along N (aqlm)
+        info.vq.N_compressed              = info.N_size / VQ_GROUP_SIZE;
+        info.vq.N_compressed_per_group    = info.N_size_per_group / VQ_GROUP_SIZE;
+        info.vq.N_group_offset_compressed = info.group_splitN ? (info.group_n_offset / VQ_GROUP_SIZE) : 0;
+        info.vq.N_tile_compressed         = info.N_tile / VQ_GROUP_SIZE;
+        info.vq.K_compressed              = info.K_size;
+        info.vq.K_tile_compressed         = info.K_tile;
+    }
 
-    uint32_t single_cb_tile_bytes = info.vq.N_tile_compressed * info.K_tile * VQ_IDX_BYTES;
+    uint32_t single_cb_tile_bytes = VQ_COMPRESS_K
+                                        ? info.vq.K_tile_compressed * info.N_tile * VQ_IDX_BYTES
+                                        : info.vq.N_tile_compressed * info.K_tile * VQ_IDX_BYTES;
     info.vq.L1_IDX_size           = single_cb_tile_bytes; // Size per codebook (not total)
     info.vq.L1_CB_size            = VQ_CB_NUM_CENTROIDS * VQ_GROUP_SIZE * VQ_CB_BYTES;
 

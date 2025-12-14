@@ -18,18 +18,21 @@ class VPTQAlgorithm(VQAlgorithm):
 
         # VPTQ-specific defaults
         self.num_codebooks = 1                  # Single codebook
+        self.codebook_format = 'fp16'
         self.group_size = 6                     # Elements per centroid (can be larger)
         self.nbits_per_cb = 12                  # 2^12 = 4096 centroids (can be larger than AQLM)
         self.cb_size = cb_size                  # Number of centroids
-        self.use_scales = True                  # VPTQ uses per-row scales
+        self.use_scales = False 
         self.enable_transpose = enable_transpose
-        self.idx_bytes=2
+        self.compress_dim = 'k'                 # Compress rows (K)
+        self.idx_bytes = 2
+        self.index_format ='separate'
 
     def get_num_codebooks(self):
         return 1  # VPTQ always uses single codebook
 
     def get_use_scales(self):
-        return True  # VPTQ uses scales
+        return self.use_scales 
 
     def get_buffer_requirements(self):
         """
@@ -42,7 +45,6 @@ class VPTQAlgorithm(VQAlgorithm):
             'L1_CB': 1,             # Single codebook
             'L1_IDX1': 1,           # Indices buffer 1
             'L1_IDX2': 1,           # Indices buffer 2
-            'L1_Scales': 2,         # Double-buffered scales
         }
 
         # Add transpose buffers if needed

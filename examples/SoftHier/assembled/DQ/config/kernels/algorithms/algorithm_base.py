@@ -17,6 +17,10 @@ class VQAlgorithm(ABC):
         self.cb_size = 256
         self.use_scales = True
         self.enable_transpose = False
+        # Orientation of compressed dimension: 'n' (columns) or 'k' (rows)
+        self.compress_dim = 'n'
+        # Bytes per index entry
+        self.idx_bytes = max(1, int(self.nbits_per_cb / 8))
 
     @abstractmethod
     def get_num_codebooks(self):
@@ -58,5 +62,7 @@ class VQAlgorithm(ABC):
             'nbits_per_cb': self.nbits_per_cb,
             'cb_size': self.cb_size,
             'use_scales': self.use_scales,
-            'enable_transpose': self.enable_transpose
+            'enable_transpose': self.enable_transpose,
+            'compress_dim': self.compress_dim,
+            'idx_bytes': self.idx_bytes,
         }

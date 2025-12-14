@@ -68,7 +68,7 @@ gemm-cfg:
 
 gemm-pld:
 	@echo "Generating preload files for GEMM ..."
-	python3 ${CUR_DIR}/scripts/kernels/gemm_preload.py \
+	${PYTHON} ${CUR_DIR}/scripts/kernels/gemm_preload.py \
 			${CUR_DIR}/software/SummaGEMM/preload.elf \
 			${CUR_DIR}/software/SummaGEMM/include/gemm_addresses.h \
 			${ARCH_FILE} \
@@ -145,7 +145,7 @@ gemv-cfg:
 
 gemv-pld:
 	@echo "Generating preload files for GEMV ..."
-	python3 ${CUR_DIR}/scripts/kernels/gemm_preload.py \
+	${PYTHON} ${CUR_DIR}/scripts/kernels/gemm_preload.py \
 			${CUR_DIR}/software/SummaGEMM/preload.elf \
 			${CUR_DIR}/software/SummaGEMM/include/gemm_addresses.h \
 			${ARCH_FILE} \
@@ -228,8 +228,8 @@ VQ_CACHE_DIR ?= ${CUR_DIR}/vq_cache
 REPO_ID ?= ISTA-DASLab/Llama-2-7b-AQLM-2Bit-2x8-hf
 WEIGHT_FILE ?= model.safetensors
 LAYER_PREFIX ?= model.layers.0.mlp.down_proj
-VQ_K ?= 2048
-VQ_N ?= 2048
+VQ_K ?= 1024
+VQ_N ?= 1024
 vq-download:
 	@echo "Downloading and extracting VQ model from HuggingFace..."
 	@mkdir -p ${VQ_CACHE_DIR}
@@ -243,10 +243,11 @@ vq-download:
 
 # Generate VQ data using specified quantization algorithm
 # Supported algorithms: aqlm, vptq
-VQ_ALGORITHM ?= aqlm
+VQ_ALGORITHM ?= vptq
 VQ_NUM_CB ?= 2
 VQ_NBITS_PER_CB ?= 8
 VQ_GROUP_SIZE ?= 8
+VPTQ_GROUP_SIZE ?= 6
 VQ_NUM_CENTROIDS ?= 4096
 VQ_MAX_EPOCHS ?= 20
 VQ_DEVICE ?= auto
@@ -271,7 +272,7 @@ else ifeq ($(VQ_ALGORITHM),vptq)
 		--k_size ${VQ_K} \
 		--n_size ${VQ_N} \
 		--num_codebooks 1 \
-		--group_size ${VQ_GROUP_SIZE} \
+		--group_size ${VPTQ_GROUP_SIZE} \
 		--num_centroids ${VQ_NUM_CENTROIDS} \
 		--max_epochs ${VQ_MAX_EPOCHS} \
 		--device ${VQ_DEVICE} \

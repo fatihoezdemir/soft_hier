@@ -11,7 +11,7 @@
 #include "summa_index.h"
 #include "vq_kernels.h"
 #include "summa_aqlm_pipelines.h"
-
+#include "summa_vptq_pipelines.h"
 /*
      ┌─────┬─────┬─────┐
      │X00→→│→→→→→│→→→→→│  Row 0 broadcasts X00

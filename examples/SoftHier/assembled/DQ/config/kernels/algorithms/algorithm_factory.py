@@ -22,6 +22,7 @@ def create_algorithm(algorithm_name, **kwargs):
     algorithm_name = algorithm_name.lower()
 
     if algorithm_name == 'aqlm':
+        enable_transpose = kwargs.get('enable_transpose', False)
         num_codebooks = kwargs.get('num_codebooks', 2)
         cb_size = kwargs.get('cb_size', 256)
         return AQLMAlgorithm(num_codebooks=num_codebooks)

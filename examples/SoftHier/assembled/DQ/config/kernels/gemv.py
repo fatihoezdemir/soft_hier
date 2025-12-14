@@ -93,7 +93,7 @@ class SummaGEMV(BaseKernel):
         # - enable_transpose=True: Transpose indices from (K, num_groups, 1) to (num_groups, K, 1)
         # - Only useful for VPTQ (baseline) with transpose engine, not needed for AQLM
         #   Example: gemv = SummaGEMV(vq_algorithm='vptq', enable_transpose=True)
-        vq_algorithm_name = kwargs.get('vq_algorithm', 'aqlm')
+        self.vq_algorithm_name = kwargs.get('vq_algorithm', 'vptq')
         enable_transpose = kwargs.get('enable_transpose', False)
 
         # Kernel variant selection
@@ -105,12 +105,12 @@ class SummaGEMV(BaseKernel):
         self.kernel_variant = kwargs.get('kernel_variant', 'baseline' if self.vq_enabled else 'baseline')
 
         # For baseline + VPTQ, default to enabling transpose to match HW access patterns
-        if self.kernel_variant == 'baseline' and vq_algorithm_name == 'vptq':
+        if self.kernel_variant == 'baseline' and self.vq_algorithm_name == 'vptq':
             enable_transpose = kwargs.get('enable_transpose', True)
 
         # Instantiate algorithm before validation
         self.vq_alg = create_algorithm(
-            vq_algorithm_name,
+            self.vq_algorithm_name,
             enable_transpose=enable_transpose,
         )
 

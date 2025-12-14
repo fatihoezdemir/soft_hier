@@ -80,8 +80,8 @@ class SummaGEMM(BaseKernel):
         self.k_size = kwargs.get('K', kwargs.get('k_size', 512))
 
         # Tile sizes
-        self.m_tile = kwargs.get('m_tile', 128/2)
-        self.n_tile = kwargs.get('n_tile', 128/2)
+        self.m_tile = kwargs.get('m_tile', 128)
+        self.n_tile = kwargs.get('n_tile', 128)
         self.k_tile = kwargs.get('k_tile', 128)
 
         # SUMMA cluster configuration
@@ -117,9 +117,6 @@ class SummaGEMM(BaseKernel):
         self.vq_force_weight_load = kwargs.get('vq_force_weight_load', 0)
         self.vq_source = kwargs.get('vq_source', 'gen')  # "gen" or "dl"
 
-        # Create VQ algorithm instance via factory
-        vq_algorithm_name = kwargs.get('vq_algorithm', 'aqlm')
-        enable_transpose = kwargs.get('enable_transpose', False)
 
         # Kernel variant selection
         # GEMV variants:
@@ -127,22 +124,19 @@ class SummaGEMM(BaseKernel):
         #  'dq' - DQ-based, separate dequant (SPATZ) + compute (REDMULE)
         #  'splitk' - K-parallel (for future, multi-core)
         self.kernel_variant = kwargs.get('kernel_variant', 'baseline' if self.vq_enabled else 'baseline')
-        
-        if self.kernel_variant == 'baseline' and vq_algorithm_name == 'vptq':
-          enable_transpose = kwargs.get('enable_transpose', True)
+        self.vq_algorithm_name = kwargs.get('vq_algorithm', 'vptq')
+        # Create VQ algorithm instance via factory
+        enable_transpose = kwargs.get('enable_transpose', True) if  self.kernel_variant == 'baseline' and self.vq_algorithm_name == 'vptq' else False
         self.vq_alg = create_algorithm(
-            vq_algorithm_name,
+            self.vq_algorithm_name,
             enable_transpose=enable_transpose,
         )
 
         # Validate config against algorithm constraints
         self.vq_alg.validate_config(kwargs)
 
-        # Extract algorithm-specific configs
-        self.vq_algorithm = vq_algorithm_name
-
         # Derived VQ parameters
-        self.compressed_dim = kwargs.get('compressed_dim', 'N')
+        # self.compressed_dim = kwargs.get('compressed_dim', 'n')
         self.vq_num_groups_per_row_tile = int(self.n_tile / self.vq_alg.group_size)
 
 

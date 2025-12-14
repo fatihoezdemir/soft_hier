@@ -36,7 +36,7 @@ def generate_vq_defines(gemm, header_prefix: str = "GEMM") -> List[str]:
         defines.append(f"#define {header_prefix}VQ_ALGORITHM_{gemm.vq_algorithm.upper()}")
     cb_bytes= 2 if gemm.vq_alg.codebook_format == "fp16" else 1
 
-    compress_dim_k = getattr(gemm, 'vq_compress_dim', 'n') == 'k'
+    compress_dim_k = getattr(gemm.vq_alg, 'compress_dim', 'n') == 'k'
 
         # self.vq_num_cb = self.vq_alg.get_num_codebooks()
     # Core VQ parameters
@@ -61,8 +61,8 @@ def generate_vq_defines(gemm, header_prefix: str = "GEMM") -> List[str]:
     def ceil_div(x, y):
         return (x + y - 1) // y
 
-    k_comp = ceil_div(gemm.k_size, gemm.vq_group_size) if compress_dim_k else gemm.k_size
-    k_comp_tile = ceil_div(gemm.k_tile, gemm.vq_group_size) if compress_dim_k else gemm.k_tile
+    k_comp = ceil_div(gemm.k_size, gemm.vq_alg.group_size) if compress_dim_k else gemm.k_size
+    k_comp_tile = ceil_div(gemm.k_tile, gemm.vq_alg.group_size) if compress_dim_k else gemm.k_tile
     n_comp = ceil_div(gemm.n_size, gemm.vq_alg.group_size) if not compress_dim_k else gemm.n_size
     n_comp_tile = ceil_div(gemm.n_tile, gemm.vq_alg.group_size) if not compress_dim_k else gemm.n_tile
 

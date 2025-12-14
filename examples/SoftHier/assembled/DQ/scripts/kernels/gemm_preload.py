@@ -84,7 +84,7 @@ def gen_vq_preload_data(gemm):
     cache_dir = os.path.join(os.path.dirname(__file__), '../../vq_cache')
 
     # Determine algorithm and source from gemm config
-    vq_algorithm = getattr(gemm, 'vq_algorithm', 'aqlm')  # Default to 'aqlm'
+    vq_algorithm = getattr(gemm, 'vq_algorithm_name', 'aqlm')  # Default to 'aqlm'
     vq_source = getattr(gemm, 'vq_source', 'gen')  # Default to 'gen' if not specified
     source_prefix = f"{vq_algorithm}_{vq_source}"
     source_name = "generated" if vq_source == "gen" else "downloaded"

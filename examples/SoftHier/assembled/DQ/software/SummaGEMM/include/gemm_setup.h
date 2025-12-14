@@ -328,10 +328,13 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
     off += L1_scales_size;
     info.vq.L1_Scales[1] = off;
     off += L1_scales_size;
-#endif
-// #if 
 
-// #endif
+
+#endif
+
+#if VQ_TRANSPOSE_ENABLED ==1
+
+#endif
 
 #endif
     if (flex_get_cluster_id() == 1 && flex_is_dm_core()) {

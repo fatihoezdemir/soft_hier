@@ -127,6 +127,7 @@ static inline void summa_vq_load_indices(SummaGEMMInfo* info, int buffer_idx, in
     (void)m;
     if (VQ_COMPRESS_K) {
         // Indices layout: (Kc, N) for now assume multicodebook too for vptq
+        // for baseline with pretransposed indices : (N, Kc)
         uint32_t K_tile_comp = info->vq.K_tile_compressed;
         uint32_t tile_col_index = n * info->summa_group_x + info->cluster_in_group_id_x;
         uint32_t col_start = tile_col_index * info->N_tile;

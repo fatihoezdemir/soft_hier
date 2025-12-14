@@ -125,9 +125,9 @@ void SummaGEMVRun(SummaGEMMInfo* info) {
     if (info->cluster_active) {
         uint32_t DMA_L1_Z     = info->L1_Z2;
         uint32_t REDMULE_L1_Z = info->L1_Z1;
-
         initZBuffer(info);
 
+        
         for (int n = 0; n < info->N_iter; ++n) {
 #if VQ_ENABLED == 1
 

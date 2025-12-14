@@ -95,3 +95,15 @@ examples/SoftHier/assembled/DQ/software/SummaGEMM/include/gemm.h
 examples/SoftHier/assembled/DQ/software/SummaGEMM/include/spatz_rvv_extensions.h
 examples/SoftHier/assembled/DQ/software/SummaGEMM/include/debug.h
 soft_hier/flex_cluster_sdk/runtime/include/hbm_placement.h
+examples/SoftHier/assembled/DQ/config/kernels/buffer_builder.py
+examples/SoftHier/assembled/DQ/scripts/kernels/gemm_l1_layout.py
+examples/SoftHier/assembled/DQ/scripts/quick_debug.sh
+
+examples/SoftHier/assembled/DQ/software/SummaGEMM/include/kernelworking.txt.c
+examples/SoftHier/assembled/DQ/software/SummaGEMM/test_vq_dequant.c
+examples/SoftHier/assembled/DQ/software/include/dq_data_hbm copy.h
+examples/SoftHier/assembled/DQ/software/include/spatz_compute.h.cpp
+
+# VQ / VPTQ runtime artifacts
+vptq_codebook_main_1.npy
+vptq_indices_main_1.npy

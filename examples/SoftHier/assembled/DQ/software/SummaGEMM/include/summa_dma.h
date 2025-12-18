@@ -128,9 +128,9 @@ static inline void summa_vq_load_indices(SummaGEMMInfo* info, int buffer_idx, in
     if (VQ_COMPRESS_K) {
         // Indices layout: (Kc, N) for now assume multicodebook too for vptq
         // for baseline with pretransposed indices : (N, Kc)
-        uint32_t K_tile_comp = info->vq.K_tile_compressed;
+        uint32_t K_tile_comp    = info->vq.K_tile_compressed;
         uint32_t tile_col_index = n * info->summa_group_x + info->cluster_in_group_id_x;
-        uint32_t col_start = tile_col_index * info->N_tile;
+        uint32_t col_start      = tile_col_index * info->N_tile;
         uint32_t row_start_comp = (k * info->K_tile) / VQ_GROUP_SIZE;
 
         for (int cb = 0; cb < VQ_NUM_CBS; ++cb) {
@@ -138,18 +138,18 @@ static inline void summa_vq_load_indices(SummaGEMMInfo* info, int buffer_idx, in
             uint32_t dst_offset = (buffer_idx == 0) ? info->vq.L1_IDX1[cb] : info->vq.L1_IDX2[cb];
 
             flex_dma_async_2d(dst_offset, info->vq.VQ_Index_address[cb] + src_offset,
-                              info->N_tile * VQ_IDX_BYTES,  // width (N_tile)
-                              info->N_tile * VQ_IDX_BYTES,  // dst stride
-                              info->N_size * VQ_IDX_BYTES,  // src stride
-                              K_tile_comp);                 // rows = K_compressed
+                              info->N_tile * VQ_IDX_BYTES, // width (N_tile)
+                              info->N_tile * VQ_IDX_BYTES, // dst stride
+                              info->N_size * VQ_IDX_BYTES, // src stride
+                              K_tile_comp);                // rows = K_compressed
             flex_dma_async_wait_all();
         }
 
         // Broadcast column-wise
         for (int cb = 0; cb < VQ_NUM_CBS; ++cb) {
             uint32_t dst_offset = (buffer_idx == 0) ? info->vq.L1_IDX1[cb] : info->vq.L1_IDX2[cb];
-            flex_dma_async_broadcast(dst_offset, dst_offset, info->vq.L1_IDX_size,
-                                     (ARCH_NUM_CLUSTER_X - 1), info->group.wakeup_col_mask);
+            flex_dma_async_broadcast(dst_offset, dst_offset, info->vq.L1_IDX_size, (ARCH_NUM_CLUSTER_X - 1),
+                                     info->group.wakeup_col_mask);
         }
         flex_dma_async_wait_all();
     } else {

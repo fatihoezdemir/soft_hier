@@ -82,7 +82,7 @@ static inline void summa_vq_dequantize_tile(const SummaGEMMInfo* info, uint32_t 
 // summa_vq_dequantize_tile but here we fuse the dequantization with computation to avoid multiple load/stores as well
 // as sync barriers (compute is already gustavson outer product algorithm) compute from: spatz_gemv_fp16_full_legacy
 // TODO , add another fused dequantizer with support in the case that the row cannot be dequantized withinan iteration
-// idea: adhjust accumulator Z store 
+// idea: adhjust accumulator Z store
 static inline void summa_vq_dequantize_tile_fused(const SummaGEMMInfo* info, uint32_t dst_L1_Z, int buffer_idx,
                                                   uint32_t src_L1_Scales, uint32_t src_L1_x, int k_tile) {
     // Fused path: dequantize and accumulate directly into dst_L1_Z with a single store per row.
@@ -108,8 +108,6 @@ static inline void summa_vq_dequantize_tile_fused(const SummaGEMMInfo* info, uin
 
         // Determine whether to keep previous output (previous K or previous tile) or start fresh
         const bool use_acc = (k_tile > 0) || (k > 0);
-
-
 
         // Set VL for the full row payload
         uint32_t vl_elems = 0;
@@ -160,8 +158,6 @@ static inline void summa_vq_dequantize_tile_fused(const SummaGEMMInfo* info, uin
                      :
                      : "r"(payload_elems), "r"(C_base)
                      : "memory");
-
-
     }
 }
 

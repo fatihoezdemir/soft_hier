@@ -44,13 +44,14 @@ int main() {
         (uint64_t[VQ_NUM_CBS])VQ_CODEBOOKS_ADDRS, (uint64_t[VQ_NUM_CBS])VQ_INDICES_ADDRS, VQ_SCALES_ADDR,
         VQ_CB_NUM_CENTROIDS,
         /* idx_size */ (GEMM_N_TILE / VQ_GROUP_SIZE) * GEMM_K_TILE * VQ_IDX_BYTES,
-        /* scale_size */ (
+        /* scale_size */
+        (
 #if defined(VQ_USE_SCALES) && (VQ_USE_SCALES == 1)
             GEMM_K_TILE * VQ_CB_BYTES
 #else
             0
 #endif
-        )
+            )
 #endif
     );
     flex_global_barrier_xy();

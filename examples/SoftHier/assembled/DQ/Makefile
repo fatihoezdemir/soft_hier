@@ -228,8 +228,8 @@ VQ_CACHE_DIR ?= ${CUR_DIR}/vq_cache
 REPO_ID ?= ISTA-DASLab/Llama-2-7b-AQLM-2Bit-2x8-hf
 WEIGHT_FILE ?= model.safetensors
 LAYER_PREFIX ?= model.layers.0.mlp.down_proj
-VQ_K ?= 1024
-VQ_N ?= 1024
+VQ_K ?= 16384
+VQ_N ?= 4096
 vq-download:
 	@echo "Downloading and extracting VQ model from HuggingFace..."
 	@mkdir -p ${VQ_CACHE_DIR}
@@ -243,12 +243,14 @@ vq-download:
 
 # Generate VQ data using specified quantization algorithm
 # Supported algorithms: aqlm, vptq
-VQ_ALGORITHM ?= vptq
+VQ_ALGORITHM ?= aqlm
 VQ_NUM_CB ?= 2
 VQ_NBITS_PER_CB ?= 8
 VQ_GROUP_SIZE ?= 8
-VPTQ_GROUP_SIZE ?= 6
-VQ_NUM_CENTROIDS ?= 4096
+
+VPTQ_GROUP_SIZE ?= 8
+VPTQ_NUM_CENTROIDS ?= 4096
+
 VQ_MAX_EPOCHS ?= 20
 VQ_DEVICE ?= auto
 
@@ -273,7 +275,7 @@ else ifeq ($(VQ_ALGORITHM),vptq)
 		--n_size ${VQ_N} \
 		--num_codebooks 1 \
 		--group_size ${VPTQ_GROUP_SIZE} \
-		--num_centroids ${VQ_NUM_CENTROIDS} \
+		--num_centroids ${VPTQ_NUM_CENTROIDS} \
 		--max_epochs ${VQ_MAX_EPOCHS} \
 		--device ${VQ_DEVICE} \
 		--output_dir ${VQ_CACHE_DIR}

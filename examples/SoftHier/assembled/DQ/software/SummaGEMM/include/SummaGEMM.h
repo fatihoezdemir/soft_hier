@@ -127,8 +127,8 @@ void SummaGEMMRun(SummaGEMMInfo* info) {
         for (int m = 0; m < info->M_iter; ++m) {
             for (int n = 0; n < info->N_iter; ++n) {
 #if VQ_ENABLED == 1
-                // run_gemm_pipelinevq(info, m, n, &DMA_L1_Z, &REDMULE_L1_Z);
-                run_gemm_pipelinevptq_baseline(info, m, n, &DMA_L1_Z, &REDMULE_L1_Z);
+                run_gemm_pipelinevq(info, m, n, &DMA_L1_Z, &REDMULE_L1_Z);
+                // run_gemm_pipelinevptq_baseline(info, m, n, &DMA_L1_Z, &REDMULE_L1_Z);
 
 #else
                 run_gemm_pipeline(info, m, n, &DMA_L1_Z, &REDMULE_L1_Z);

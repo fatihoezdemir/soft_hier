@@ -7,9 +7,13 @@
 #include "summa_dma.h"
 #include "vq_kernels.h"
 static inline void run_gemv_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32_t* DMA_L1_Z, uint32_t* REDMULE_L1_Z) {
-    const int tiles      = info->K_iter;
-    const int SPATZ_CORE = 2;
-    uint32_t core_id     = flex_get_core_id();
+    const int tiles  = info->K_iter;
+    uint32_t core_id = flex_get_core_id();
+    uint32_t deq_k_start = 0;
+    uint32_t deq_k_rows  = 0;
+    if (info->spatz_attached) {
+        summa_partition_k_rows(info->K_tile, info->spatz_sid, info->spatz_num, &deq_k_start, &deq_k_rows);
+    }
 
     if (tiles <= 0) {
         flex_global_barrier_xy();
@@ -48,10 +52,10 @@ static inline void run_gemv_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
             summa_vq_load_scales(info, scale_buffers[1], m, n, 1);
 #endif
         }
-    } else if (core_id == SPATZ_CORE) {
+    } else if (deq_k_rows > 0) {
         if (flex_get_cluster_id() == 0)
             flex_timer_start();
-        summa_vq_dequantize_tile(info, w_buffers[0], 0, scale_buffers[0], 0);
+        summa_vq_dequantize_tile(info, w_buffers[0], 0, scale_buffers[0], 0, deq_k_start, deq_k_rows);
         if (flex_get_cluster_id() == 0)
             flex_timer_end();
     }
@@ -101,7 +105,7 @@ static inline void run_gemv_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
 #endif
                 ++next_idx_tile;
             }
-        } else if (core_id == SPATZ_CORE) {
+        } else if (deq_k_rows > 0) {
             // SPATZ: Dequantize W for tile (tile)
             if (next_deq_tile < tiles) {
                 uint32_t dst_w     = w_buffers[next_deq_tile & 0x1];
@@ -109,7 +113,7 @@ static inline void run_gemv_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
                 uint32_t src_scale = scale_buffers[buffer_idx];
                 if (flex_get_cluster_id() == 0)
                     flex_timer_start();
-                summa_vq_dequantize_tile(info, dst_w, buffer_idx, src_scale, next_deq_tile);
+                summa_vq_dequantize_tile(info, dst_w, buffer_idx, src_scale, next_deq_tile, deq_k_start, deq_k_rows);
                 if (flex_get_cluster_id() == 0)
                     flex_timer_end();
                 ++next_deq_tile;
@@ -193,10 +197,23 @@ static inline void run_gemv_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
 // Triple staged, dequantization-based pipeline with SPATZ compute instead of REDMULE
 static inline void run_gemv_pipelinevq_spatz(SummaGEMMInfo* info, int m, int n, uint32_t* DMA_L1_Z,
                                              uint32_t* REDMULE_L1_Z) {
-    const int tiles        = info->K_iter;
-    const int SPATZ_CORE   = 2; // dedicated to dequant
-    const int COMPUTE_CORE = 0; // dedicated to GEMV compute
-    uint32_t core_id       = flex_get_core_id();
+    const int tiles               = info->K_iter;
+    const uint32_t COMPUTE_CORE   = info->spatz_compute_core; //  to GEMV compute
+    uint32_t core_id              = flex_get_core_id();
+    const bool compute_core_is_spatz = info->spatz_check_list[COMPUTE_CORE] != 0;
+    const uint32_t compute_sid       = info->spatz_sid_list[COMPUTE_CORE];
+    uint32_t deq_workers = compute_core_is_spatz && info->spatz_num > 0 ? (info->spatz_num - 1) : info->spatz_num;
+    bool is_compute_core = (core_id == COMPUTE_CORE);
+    bool is_deq_core     = info->spatz_attached && !is_compute_core && deq_workers > 0;
+    uint32_t deq_k_start = 0;
+    uint32_t deq_k_rows  = 0;
+    if (is_deq_core) {
+        uint32_t deq_rank = info->spatz_sid;
+        if (compute_core_is_spatz && info->spatz_sid > compute_sid) {
+            deq_rank -= 1;
+        }
+        summa_partition_k_rows(info->K_tile, deq_rank, deq_workers, &deq_k_start, &deq_k_rows);
+    }
 
     if (tiles <= 0) {
         flex_global_barrier_xy();
@@ -236,8 +253,8 @@ static inline void run_gemv_pipelinevq_spatz(SummaGEMMInfo* info, int m, int n, 
             summa_vq_load_scales(info, scale_buffers[1], m, n, 1);
 #endif
         }
-    } else if (core_id == SPATZ_CORE) {
-        summa_vq_dequantize_tile(info, w_buffers[0], 0, scale_buffers[0], 0);
+    } else if (is_deq_core && deq_k_rows > 0) {
+        summa_vq_dequantize_tile(info, w_buffers[0], 0, scale_buffers[0], 0, deq_k_start, deq_k_rows);
     }
     flex_intra_cluster_sync();
 
@@ -268,15 +285,15 @@ static inline void run_gemv_pipelinevq_spatz(SummaGEMMInfo* info, int m, int n, 
 #endif
                 ++next_idx_tile;
             }
-        } else if (core_id == SPATZ_CORE) {
+        } else if (is_deq_core && deq_k_rows > 0) {
             if (next_deq_tile < tiles) {
                 uint32_t dst_w     = w_buffers[next_deq_tile & 0x1];
                 int buffer_idx     = next_deq_tile & 0x1;
                 uint32_t src_scale = scale_buffers[buffer_idx];
-                summa_vq_dequantize_tile(info, dst_w, buffer_idx, src_scale, next_deq_tile);
+                summa_vq_dequantize_tile(info, dst_w, buffer_idx, src_scale, next_deq_tile, deq_k_start, deq_k_rows);
                 ++next_deq_tile;
             }
-        } else if (core_id == COMPUTE_CORE) {
+        } else if (is_compute_core) {
             bool accumulate = (tile > 0);
             spatz_gemv_fp16_full_legacy((uint16_t*)x_buffers[tile & 0x1], (uint16_t*)w_buffers[tile & 0x1],
                                         (uint16_t*)compute_L1_Z, info->M_tile, info->K_tile, info->N_tile, accumulate);
@@ -436,9 +453,13 @@ static inline void run_gemv_pipelinevq_fused(SummaGEMMInfo* info, int m, int n, 
 }
 
 static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32_t* DMA_L1_Z, uint32_t* REDMULE_L1_Z) {
-    const int tiles      = info->K_iter;
-    const int SPATZ_CORE = 2;
-    uint32_t core_id     = flex_get_core_id();
+    const int tiles  = info->K_iter;
+    uint32_t core_id = flex_get_core_id();
+    uint32_t deq_k_start = 0;
+    uint32_t deq_k_rows  = 0;
+    if (info->spatz_attached) {
+        summa_partition_k_rows(info->K_tile, info->spatz_sid, info->spatz_num, &deq_k_start, &deq_k_rows);
+    }
 
     if (tiles <= 0) {
         flex_global_barrier_xy();
@@ -490,10 +511,10 @@ static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
             summa_vq_load_scales(info, scale_buffers[1], m, n, 1);
 #endif
         }
-    } else if (core_id == SPATZ_CORE) {
+    } else if (deq_k_rows > 0) {
         if (flex_get_cluster_id() == 0)
             flex_timer_start();
-        summa_vq_dequantize_tile(info, w_buffers[0], 0, scale_buffers[0], 0);
+        summa_vq_dequantize_tile(info, w_buffers[0], 0, scale_buffers[0], 0, deq_k_start, deq_k_rows);
         if (flex_get_cluster_id() == 0)
             flex_timer_end();
     }
@@ -559,7 +580,7 @@ static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
 #endif
                 ++next_idx_tile;
             }
-        } else if (core_id == SPATZ_CORE) {
+        } else if (deq_k_rows > 0) {
             // SPATZ: Dequantize W for tile (tile)
             if (next_deq_tile < tiles) {
                 uint32_t dst_w     = w_buffers[next_deq_tile & 0x1];
@@ -567,7 +588,7 @@ static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
                 uint32_t src_scale = scale_buffers[buffer_idx];
                 if (flex_get_cluster_id() == 0)
                     flex_timer_start();
-                summa_vq_dequantize_tile(info, dst_w, buffer_idx, src_scale, next_deq_tile);
+                summa_vq_dequantize_tile(info, dst_w, buffer_idx, src_scale, next_deq_tile, deq_k_start, deq_k_rows);
                 if (flex_get_cluster_id() == 0)
                     flex_timer_end();
                 ++next_deq_tile;

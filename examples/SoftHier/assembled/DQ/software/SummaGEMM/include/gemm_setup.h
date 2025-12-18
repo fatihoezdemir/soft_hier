@@ -78,6 +78,14 @@ typedef struct SummaGEMMInfo {
     uint32_t cluster_for_rowwise;
     uint32_t cluster_for_colwise;
 
+    // Spatz information (same as  impl/activationh)
+    uint32_t spatz_num;
+    uint32_t spatz_check_list[ARCH_NUM_CORE_PER_CLUSTER];
+    uint32_t spatz_sid_list[ARCH_NUM_CORE_PER_CLUSTER];
+    uint32_t spatz_attached;
+    uint32_t spatz_sid;
+    uint32_t spatz_compute_core;
+
     // Tiling information
     uint32_t M_iter;
     uint32_t N_iter;
@@ -118,6 +126,9 @@ typedef struct SummaGEMMInfo {
     uint32_t L1_X2;
     uint32_t L1_W2;
     uint32_t L1_Z2;
+#if defined(KERNEL_VARIANT_FUSED) && (KERNEL_VARIANT_FUSED == 1)
+    uint32_t L1_Z_partial[ARCH_SPATZ_ATTACED_CORES];
+#endif
 
     // Usefull parameters for address calculation
     uint32_t L1_X_size;
@@ -210,6 +221,21 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
             ? 1
             : 0;
 
+    // Spatz information
+    info.spatz_num = ARCH_SPATZ_ATTACED_CORES;
+    uint32_t spatz_check_tmp[ARCH_NUM_CORE_PER_CLUSTER] = ARCH_SPATZ_ATTACED_CHECK_LIST;
+    for (int i = 0; i < ARCH_NUM_CORE_PER_CLUSTER; ++i) {
+        info.spatz_check_list[i] = spatz_check_tmp[i];
+    }
+    uint32_t spatz_sid_tmp[ARCH_NUM_CORE_PER_CLUSTER] = ARCH_SPATZ_ATTACED_SID_LIST;
+    for (int i = 0; i < ARCH_NUM_CORE_PER_CLUSTER; ++i) {
+        info.spatz_sid_list[i] = spatz_sid_tmp[i];
+    }
+    info.spatz_attached = info.spatz_check_list[flex_get_core_id()];
+    info.spatz_sid      = info.spatz_sid_list[flex_get_core_id()];
+    uint32_t spatz_core_tmp[ARCH_NUM_CORE_PER_CLUSTER] = ARCH_SPATZ_ATTACED_CORE_LIST;
+    info.spatz_compute_core                              = spatz_core_tmp[0];
+
     info.N_size_per_group = n_size_per_group;
     info.group_n_offset   = info.group_splitN ? (info.group.this_grid_id * n_size_per_group) : 0;
 
@@ -265,6 +291,14 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
     info.L1_Z2 = off;
     off += info.L1_Z_size; //
     // #ifndef KERNEL_VARIANT_FUSED
+#if defined(KERNEL_VARIANT_FUSED) && (KERNEL_VARIANT_FUSED == 1)
+    for (int i = 0; i < ARCH_SPATZ_ATTACED_CORES; ++i) {
+        info.L1_Z_partial[i] = off;
+        if (i < info.spatz_num) {
+            off += info.L1_Z_size;
+        }
+    }
+#endif
     info.L1_W1 = off;
     off += info.L1_W_size; //
     info.L1_W2 = off;

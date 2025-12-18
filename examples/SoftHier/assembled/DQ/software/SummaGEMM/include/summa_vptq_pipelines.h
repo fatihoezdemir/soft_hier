@@ -148,7 +148,7 @@ static inline void run_gemv_pipelinevptq_baseline(SummaGEMMInfo* info, int m, in
 #endif
 
         if (flex_is_first_core()) {
-            flex_redmule_wait();
+            flex_redmule_wait();//
         }
         flex_intra_cluster_sync();
 

@@ -132,8 +132,8 @@ void SummaGEMVRun(SummaGEMMInfo* info) {
 
             // run_gemv_pipelinevq_fused(info, 0 /*m*/, n, &DMA_L1_Z, &REDMULE_L1_Z);
             // run_gemv_pipelinevq_spatz(info, 0 /*m*/, n, &DMA_L1_Z, &REDMULE_L1_Z);
-            run_gemv_pipelinevq(info, 0 /*m*/, n, &DMA_L1_Z, &REDMULE_L1_Z);
-            // run_gemv_pipelinevptq_baseline(info, 0 /*m*/, n, &DMA_L1_Z, &REDMULE_L1_Z);
+            // run_gemv_pipelinevq(info, 0 /*m*/, n, &DMA_L1_Z, &REDMULE_L1_Z);
+            run_gemv_pipelinevptq_baseline(info, 0 /*m*/, n, &DMA_L1_Z, &REDMULE_L1_Z);
 
 #else
             run_gemv_pipeline(info, 0 /*m*/, n, &DMA_L1_Z, &REDMULE_L1_Z);

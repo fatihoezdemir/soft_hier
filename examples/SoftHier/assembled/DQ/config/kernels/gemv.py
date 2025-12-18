@@ -93,15 +93,18 @@ class SummaGEMV(BaseKernel):
         # - enable_transpose=True: Transpose indices from (K, num_groups, 1) to (num_groups, K, 1)
         # - Only useful for VPTQ (baseline) with transpose engine, not needed for AQLM
         #   Example: gemv = SummaGEMV(vq_algorithm='vptq', enable_transpose=True)
-        self.vq_algorithm_name = kwargs.get('vq_algorithm', 'vptq')
+        self.vq_algorithm_name = kwargs.get('vq_algorithm', 'aqlm')
         enable_transpose = kwargs.get('enable_transpose', False)
 
         # Kernel variant selection
         # GEMV variants:
-        #  'baseline' - no DQ, standard REDMULE
-        #  'dq' - DQ-based, separate dequant (SPATZ) + compute (REDMULE)
-        #  'fused' - DQ-fused, SPATZ does both dequant+compute
-        #  'splitk' - K-parallel (for future, multi-core)
+        #  'nodq' - no DQ, standard REDMULE
+        #  'baseline' - DQ-based with existing RVV
+        #  'acc_load' - DQ-based, with vlxblk instruction (for col-major like vptq, use transpose engine)
+        #  'acc_load_store' - DQ-based, with vlxblk and stride segment store instruction (only col-major like vptq, aqlm etc unsupported)
+        #  'spatz_comp' DQ-based, with spatz as computing (only aqlm)
+        #  'fused' - 'Fused dq and compute
+        #  'splitk' - K-parallel (for future, multi-core)(default is splitn)
         self.kernel_variant = kwargs.get('kernel_variant', 'baseline' if self.vq_enabled else 'baseline')
 
         # For baseline + VPTQ, default to enabling transpose to match HW access patterns

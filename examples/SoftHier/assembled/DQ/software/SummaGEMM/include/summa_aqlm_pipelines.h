@@ -4,6 +4,8 @@
 #if VQ_ENABLED == 1
 #include "gemm.h"
 #include "gemm_setup.h"
+#include "summa_dma.h"
+#include "vq_kernels.h"
 static inline void run_gemv_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32_t* DMA_L1_Z, uint32_t* REDMULE_L1_Z) {
     const int tiles      = info->K_iter;
     const int SPATZ_CORE = 2;
@@ -351,11 +353,11 @@ static inline void run_gemv_pipelinevq_fused(SummaGEMMInfo* info, int m, int n, 
             summa_load_X_tile(info, x_buffers[0], m, n, 0);
         }
         if (info->cluster_for_colwise == 1) {
-            if( flex_get_cluster_id()==0)
-            flex_timer_start();
+            if (flex_get_cluster_id() == 0)
+                flex_timer_start();
             summa_vq_load_indices(info, 0, m, n, 0);
-                        if( flex_get_cluster_id()==0)
-            flex_timer_end();
+            if (flex_get_cluster_id() == 0)
+                flex_timer_end();
 #if VQ_USE_SCALES == 1
             summa_vq_load_scales(info, scale_buffers[0], m, n, 0);
 #endif
@@ -432,8 +434,6 @@ static inline void run_gemv_pipelinevq_fused(SummaGEMMInfo* info, int m, int n, 
     }
     flex_intra_cluster_sync();
 }
-
-
 
 static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32_t* DMA_L1_Z, uint32_t* REDMULE_L1_Z) {
     const int tiles      = info->K_iter;
@@ -634,7 +634,6 @@ static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
     }
     flex_intra_cluster_sync();
 }
-
 
 #endif
 #endif

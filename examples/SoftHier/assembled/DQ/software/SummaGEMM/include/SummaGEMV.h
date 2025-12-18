@@ -8,10 +8,12 @@
 #include "flex_runtime.h"
 #include "gemm_setup.h"
 #include "spatz_compute.h"
+#include "summa_aqlm_pipelines.h"
 #include "summa_dma.h"
 #include "summa_index.h"
+#include "summa_vptq_pipelines.h"
 #include "vq_kernels.h"
-#include "summa_aqlm_pipelines.h"
+
 // run_gemv_pipeline is basically run_gemm_pipeline vice versa for run_gemv_pipeline_vq , TODO add spatz multiple core
 // support
 static inline void run_gemv_pipeline(SummaGEMMInfo* info, int m, int n, uint32_t* DMA_L1_Z, uint32_t* REDMULE_L1_Z) {
@@ -109,8 +111,6 @@ static inline void run_gemv_pipeline(SummaGEMMInfo* info, int m, int n, uint32_t
     flex_intra_cluster_sync();
 }
 
-
-
 void SummaGEMVRun(SummaGEMMInfo* info) {
     flex_global_barrier_xy();
 
@@ -127,15 +127,15 @@ void SummaGEMVRun(SummaGEMMInfo* info) {
         uint32_t REDMULE_L1_Z = info->L1_Z1;
         initZBuffer(info);
 
-        
         for (int n = 0; n < info->N_iter; ++n) {
 #if VQ_ENABLED == 1
 
             // run_gemv_pipelinevq_fused(info, 0 /*m*/, n, &DMA_L1_Z, &REDMULE_L1_Z);
             // run_gemv_pipelinevq_spatz(info, 0 /*m*/, n, &DMA_L1_Z, &REDMULE_L1_Z);
             run_gemv_pipelinevq(info, 0 /*m*/, n, &DMA_L1_Z, &REDMULE_L1_Z);
-            
-            #else
+            // run_gemv_pipelinevptq_baseline(info, 0 /*m*/, n, &DMA_L1_Z, &REDMULE_L1_Z);
+
+#else
             run_gemv_pipeline(info, 0 /*m*/, n, &DMA_L1_Z, &REDMULE_L1_Z);
 #endif
         }
@@ -147,3 +147,4 @@ void SummaGEMVRun(SummaGEMMInfo* info) {
     }
 }
 #endif //_SUMMA_GEMV_H_
+       //

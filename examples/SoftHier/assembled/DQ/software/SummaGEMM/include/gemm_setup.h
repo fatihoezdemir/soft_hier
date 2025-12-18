@@ -38,7 +38,7 @@ typedef struct VQ {
 static inline void summa_config_assert(uint32_t condition, uint32_t eoc_code) {
     if (!condition) {
         // if(flex_get_cluster_id()==1)
-            printf("exiting, error %lx", eoc_code );
+        printf("exiting, error %lx", eoc_code);
         flex_eoc(eoc_code);
         while (1) {
         }
@@ -128,7 +128,9 @@ typedef struct SummaGEMMInfo {
     vq vq;
 
 #endif
-
+#if VQ_TRANSPOSE_ENABLED == 1
+    uint32_t L1_DETRANSPOSED;
+#endif
     uint32_t L1_AREA;
 
 } SummaGEMMInfo;
@@ -184,13 +186,8 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
     } else {
         summa_config_assert((K_size % K_tile) == 0, 0xE00A);
     }
-#if VQ_ENABLED == 1
-    // summa_config_assert((N_tile % VQ_GROUP_SIZE) == 0, 0xE00B);
-#endif
+
     const uint32_t n_size_per_group = group_splitN ? (N_size / num_group) : N_size;
-#if VQ_ENABLED == 1
-    // summa_config_assert((n_size_per_group % VQ_GROUP_SIZE) == 0, 0xE00C);
-#endif
 
     // Group infomation
     FlexPosition pos           = get_pos(flex_get_cluster_id());
@@ -259,13 +256,19 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
     info.Z_tile_M_iter_offset = info.summa_group_y * M_tile * N_size * DATA_TYPE_BYTE;
     info.Z_tile_N_iter_offset = info.summa_group_x * N_tile * DATA_TYPE_BYTE;
     uint32_t off              = local(0);
-    info.L1_X1                = off; off += info.L1_X_size;
-    info.L1_X2 = off; off += info.L1_X_size;
-    info.L1_Z1 = off; off += info.L1_Z_size; //
-    info.L1_Z2 = off; off += info.L1_Z_size; //
+    info.L1_X1                = off;
+    off += info.L1_X_size;
+    info.L1_X2 = off;
+    off += info.L1_X_size;
+    info.L1_Z1 = off;
+    off += info.L1_Z_size; //
+    info.L1_Z2 = off;
+    off += info.L1_Z_size; //
     // #ifndef KERNEL_VARIANT_FUSED
-    info.L1_W1 = off; off += info.L1_W_size; //
-    info.L1_W2 = off;    off += info.L1_W_size; //
+    info.L1_W1 = off;
+    off += info.L1_W_size; //
+    info.L1_W2 = off;
+    off += info.L1_W_size; //
     // #endif
 #if VQ_ENABLED == 1
     // Copy codebook addresses array
@@ -285,24 +288,23 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
 
     // Pre-compute constants to avoid recomputation during loads
     if (VQ_COMPRESS_K) {
-        info.vq.K_compressed           = (info.K_size + VQ_GROUP_SIZE - 1) / VQ_GROUP_SIZE;
-        info.vq.K_tile_compressed      = (info.K_tile + VQ_GROUP_SIZE - 1) / VQ_GROUP_SIZE;
-        info.vq.N_compressed           = info.N_size;  // not compressed
-        info.vq.N_tile_compressed      = info.N_tile;  // not compressed
-        info.vq.N_compressed_per_group = info.N_size_per_group; // unchanged
+        info.vq.K_compressed              = (info.K_size + VQ_GROUP_SIZE - 1) / VQ_GROUP_SIZE;
+        info.vq.K_tile_compressed         = (info.K_tile + VQ_GROUP_SIZE - 1) / VQ_GROUP_SIZE;
+        info.vq.N_compressed              = info.N_size;           // not compressed
+        info.vq.N_tile_compressed         = info.N_tile;           // not compressed
+        info.vq.N_compressed_per_group    = info.N_size_per_group; // unchanged
         info.vq.N_group_offset_compressed = info.group_splitN ? info.group_n_offset : 0;
-    } else {//Compress along N (aqlm)
+    } else { // Compress along N (aqlm)
         info.vq.N_compressed              = info.N_size / VQ_GROUP_SIZE;
         info.vq.N_compressed_per_group    = info.N_size_per_group / VQ_GROUP_SIZE;
         info.vq.N_group_offset_compressed = info.group_splitN ? (info.group_n_offset / VQ_GROUP_SIZE) : 0;
         info.vq.N_tile_compressed         = info.N_tile / VQ_GROUP_SIZE;
-        info.vq.K_compressed              = info.K_size;
-        info.vq.K_tile_compressed         = info.K_tile;
+        info.vq.K_compressed              = info.K_size; // not compressed
+        info.vq.K_tile_compressed         = info.K_tile; // not compressed
     }
 
-    uint32_t single_cb_tile_bytes = VQ_COMPRESS_K
-                                        ? info.vq.K_tile_compressed * info.N_tile * VQ_IDX_BYTES
-                                        : info.vq.N_tile_compressed * info.K_tile * VQ_IDX_BYTES;
+    uint32_t single_cb_tile_bytes = VQ_COMPRESS_K ? info.vq.K_tile_compressed * info.N_tile * VQ_IDX_BYTES
+                                                  : info.vq.N_tile_compressed * info.K_tile * VQ_IDX_BYTES;
     info.vq.L1_IDX_size           = single_cb_tile_bytes; // Size per codebook (not total)
     info.vq.L1_CB_size            = VQ_CB_NUM_CENTROIDS * VQ_GROUP_SIZE * VQ_CB_BYTES;
 
@@ -322,6 +324,9 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
         info.vq.L1_IDX2[i] = off;
         off += single_cb_tile_bytes;
     }
+
+    if (VQ_TRANSPOSE_ENABLED) {
+    }
 #if VQ_USE_SCALES == 1
     uint32_t L1_scales_size = K_tile * VQ_CB_BYTES;
     info.vq.L1_Scales[0]    = off;
@@ -329,11 +334,12 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
     info.vq.L1_Scales[1] = off;
     off += L1_scales_size;
 
-
 #endif
 
-#if VQ_TRANSPOSE_ENABLED ==1
-
+#if VQ_TRANSPOSE_ENABLED == 1
+     // in case we use the transpose engine we might need to detrasnpsose the column-major dequantizer
+    info.L1_DETRANSPOSED = off;
+    off += info.L1_W_size;
 #endif
 
 #endif

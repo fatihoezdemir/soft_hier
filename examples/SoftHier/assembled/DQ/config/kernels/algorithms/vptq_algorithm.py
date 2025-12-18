@@ -19,7 +19,7 @@ class VPTQAlgorithm(VQAlgorithm):
         # VPTQ-specific defaults
         self.num_codebooks = 1                  # Single codebook
         self.codebook_format = 'fp16'
-        self.group_size = 6                     # Elements per centroid (can be larger)
+        self.group_size = 8                     # Elements per centroid (can be larger)
         self.nbits_per_cb = 12                  # 2^12 = 4096 centroids (can be larger than AQLM)
         self.cb_size = cb_size                  # Number of centroids
         self.use_scales = False 

@@ -120,13 +120,15 @@ class SummaGEMM(BaseKernel):
 
         # Kernel variant selection
         # GEMV variants:
-        #  'baseline' - no DQ, standard REDMULE
-        #  'dq' - DQ-based, separate dequant (SPATZ) + compute (REDMULE)
-        #  'splitk' - K-parallel (for future, multi-core)
+        #  'nodq' - no DQ, standard REDMULE
+        #  'baseline' - DQ-based with existing RVV
+        #  'acc_load' - DQ-based, with vlxblk instruction (for col-major like vptq, use transpose engine)
+        #  'acc_load_store' - DQ-based, with vlxblk and stride segment store instruction (only col-major like vptq, aqlm etc unsupported)
+
         self.kernel_variant = kwargs.get('kernel_variant', 'baseline' if self.vq_enabled else 'baseline')
         self.vq_algorithm_name = kwargs.get('vq_algorithm', 'vptq')
         # Create VQ algorithm instance via factory
-        enable_transpose = kwargs.get('enable_transpose', True) if  self.kernel_variant == 'baseline' and self.vq_algorithm_name == 'vptq' else False
+        enable_transpose = kwargs.get('enable_transpose', True) if ( self.kernel_variant == 'baseline' )and self.vq_algorithm_name == 'vptq' else False
         self.vq_alg = create_algorithm(
             self.vq_algorithm_name,
             enable_transpose=enable_transpose,
@@ -168,9 +170,4 @@ class SummaGEMM(BaseKernel):
         """Validate tile alignment (extended for VQ)."""
         super()._validate_alignment()
 
-        # VQ-specific validation
-        # if self.n_tile % self.vq_group_size != 0:
-        #     raise ValueError(
-        #         f"n_tile {self.n_tile} must be a multiple of "
-        #         f"VQ group size ({self.vq_group_size})"
-        #     )
+

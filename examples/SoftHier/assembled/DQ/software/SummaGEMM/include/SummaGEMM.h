@@ -7,11 +7,11 @@
 #include "flex_redmule.h"
 #include "flex_runtime.h"
 #include "gemm_setup.h"
+#include "summa_aqlm_pipelines.h"
 #include "summa_dma.h"
 #include "summa_index.h"
-#include "vq_kernels.h"
-#include "summa_aqlm_pipelines.h"
 #include "summa_vptq_pipelines.h"
+#include "vq_kernels.h"
 /*
      ┌─────┬─────┬─────┐
      │X00→→│→→→→→│→→→→→│  Row 0 broadcasts X00
@@ -127,8 +127,10 @@ void SummaGEMMRun(SummaGEMMInfo* info) {
         for (int m = 0; m < info->M_iter; ++m) {
             for (int n = 0; n < info->N_iter; ++n) {
 #if VQ_ENABLED == 1
-                run_gemm_pipelinevq(info, m, n, &DMA_L1_Z, &REDMULE_L1_Z);
-                #else
+                // run_gemm_pipelinevq(info, m, n, &DMA_L1_Z, &REDMULE_L1_Z);
+                run_gemm_pipelinevptq_baseline(info, m, n, &DMA_L1_Z, &REDMULE_L1_Z);
+
+#else
                 run_gemm_pipeline(info, m, n, &DMA_L1_Z, &REDMULE_L1_Z);
 #endif
             }

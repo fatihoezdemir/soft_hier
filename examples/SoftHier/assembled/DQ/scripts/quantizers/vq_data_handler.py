@@ -184,7 +184,7 @@ class VQDataHandler:
                 print(f"  Compress-dim=K: indices kept as (Kc, N, 1): {idx.shape}")
             else:
                 # VPTQ indices: (num_groups, K) -> (K, num_groups, 1)
-                idx = idx.T[:, :, np.newaxis]
+                idx = idx[:, :, np.newaxis]
                 print(f"Converted to standard format:")
                 print(f"  Codebooks: {cb.shape} (num_codebooks, num_centroids, group_size)")
                 print(f"  Indices: {idx.shape} (K, num_groups, num_codebooks)")

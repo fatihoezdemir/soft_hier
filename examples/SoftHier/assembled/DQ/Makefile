@@ -85,17 +85,17 @@ gemm-hs:
 	@echo "Compiling SoftHier HW & software for GEMM ..."
 	cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ../../../../ hs
 
-gemm-sw:gemm-pld
+gemm-sw:gemm-cfg
 	@echo "Compiling SoftHier software for GEMM ..."
 	cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ${SH_DIR} sw
 	@echo "Running SoftHier simulation for GEMM ..."
 	pld=${CUR_DIR}/software/SummaGEMM/preload.elf cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ${SH_DIR} run
-gemm-swd:gemm-pld
+gemm-swd:gemm-cfg
 	@echo "Compiling SoftHier software for GEMM ..."
 	cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ${SH_DIR} sw
 	@echo "Running SoftHier simulation for GEMM ..."
 	pld=${CUR_DIR}/software/SummaGEMM/preload.elf cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ${SH_DIR} rund
-gemm-swv:gemm-pld
+gemm-swv:gemm-cfg
 	@echo "Compiling SoftHier software for GEMM ..."
 	cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ${SH_DIR} sw
 	@echo "Running SoftHier simulation for GEMM ..."
@@ -167,7 +167,7 @@ gemv-sw: gemv-cfg
 	cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ${SH_DIR} sw
 	@echo "Running SoftHier simulation for GEMV ..."
 	pld=${CUR_DIR}/software/SummaGEMM/preload.elf cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ${SH_DIR} run
-gemv-swd:gemv-pld
+gemv-swd:gemv-cfg
 	@echo "Compiling SoftHier software for GEMV ..."
 	cfg=${ARCH_FILE} app=${CUR_DIR}/software/SummaGEMM make -C ${SH_DIR} sw
 	@echo "Running SoftHier simulation for GEMV ..."

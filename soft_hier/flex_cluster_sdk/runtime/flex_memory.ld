@@ -1,8 +1,29 @@
+
 /* Copyright 2020 ETH Zurich and University of Bologna. */
 /* Solderpad Hardware License, Version 0.51, see LICENSE for details. */
 /* SPDX-License-Identifier: SHL-0.51 */
 
-/* DEV-ONLY: SoftHier-Deeploy Integration */
+/*
+ * Configurable Linker Script for SoftHier with HBM Edge Placement
+ *
+ * This linker script is automatically generated from the architecture configuration.
+ *
+ * HBM Memory Layout:
+ *   - WEST:  0xc0000000  (Length: 0x20000000)
+ *   - NORTH: 0xe0000000 (Length: 0x1000000)
+ *   - EAST:  0xe1000000  (Length: 0x1000000)
+ *   - SOUTH: 0xe2000000 (Length: 0x1e000000)
+ *
+ * Usage - Place data on specific HBM edges:
+ *   __attribute__((section(".hbm_west")))  float matrix_a[1024];
+ *   __attribute__((section(".hbm_north"))) float matrix_b[1024];
+ *   __attribute__((section(".hbm_east")))  float matrix_c[1024];
+ *   __attribute__((section(".hbm_south"))) float result[1024];
+ *
+ * Available symbols for runtime allocation:
+ *   __hbm_west_heap_start, __hbm_north_heap_start, __hbm_east_heap_start, __hbm_south_heap_start
+ *   __hbm_west_start, __hbm_north_start, __hbm_east_start, __hbm_south_start
+ */
 
 OUTPUT_ARCH( "riscv" )
 ENTRY(_start)
@@ -17,9 +38,15 @@ PHDRS
 /* file. It should define at least the L1 and L3 memory blocks. */
 MEMORY
 {
-    L1  (rwxa) : ORIGIN = 0x00000010, LENGTH = 0x00100000
+    L1  (rwxa) : ORIGIN = 0, LENGTH = 0x00100000
     L3  (rwxa) : ORIGIN = 0x80000000, LENGTH = 0x80000000
-    HBM (rwxa) : ORIGIN = 0xc0000000, LENGTH = 0x20000000
+
+
+    HBM_WEST (rwxa) : ORIGIN = 0xc0000000, LENGTH = 0x20000000
+    HBM_NORTH (rwxa) : ORIGIN = 0xe0000000, LENGTH = 0x1000000
+    HBM_EAST (rwxa) : ORIGIN = 0xe1000000, LENGTH = 0x1000000
+    HBM_SOUTH (rwxa) : ORIGIN = 0xe2000000, LENGTH = 0x1e000000
+
 }
 
 SECTIONS
@@ -93,9 +120,6 @@ SECTIONS
     __cbss_end = .;
   } >L3 :l3
 
-  /* used by the startup to initialize data */
-  _sidata = LOADADDR(.data);
-
   /* small data section that can be addressed through the global pointer */
   .sdata          :
   {
@@ -106,12 +130,14 @@ SECTIONS
   } >L3 :l3
 
   /* Initialized data sections goes into L3 */
+  _sidata = LOADADDR(.data);
   .data :
   {
     __DATA_BEGIN__ = .;
     *(.data .data.* .gnu.linkonce.d.*)
     SORT(CONSTRUCTORS)
-  } >HBM :hbm
+    . = ALIGN(4);
+  } >L3 AT>L3 :l3
   _edata = .; PROVIDE (edata = .);
 
   /* small bss section */
@@ -150,14 +176,48 @@ SECTIONS
     _edram = .;
   } >L3 :l3
 
-  .hbm :
+  /* HBM memory sections - for edge-specific data placement */
+  /* Users can place data on specific HBM edges using __attribute__((section(".hbm_west"))) */
+  .hbm_west :
   {
     *(.hbm_prio)
     . = ALIGN(1024);
-    *(.hbm)
-    *(.hbm*)
+    *(.hbm_west)
+    *(.hbm_west*)
     . = ALIGN(1024);
     __hbm_heap_start = .;
-  } >HBM :hbm
+  } >HBM_WEST :hbm
 
+  .hbm_north :
+  {
+    *(.hbm_north)
+    *(.hbm_north*)
+    . = ALIGN(1024);
+  } >HBM_NORTH :hbm
+
+  .hbm_east :
+  {
+    *(.hbm_east)
+    *(.hbm_east*)
+    . = ALIGN(1024);
+  } >HBM_EAST :hbm
+
+  .hbm_south :
+  {
+    *(.hbm_south)
+    *(.hbm_south*)
+    . = ALIGN(1024);
+  } >HBM_SOUTH :hbm
+
+  /* HBM edge base addresses for runtime use */
+  PROVIDE(__hbm_west_base = 0xc0000000);
+  PROVIDE(__hbm_north_base = 0xe0000000);
+  PROVIDE(__hbm_east_base = 0xe1000000);
+  PROVIDE(__hbm_south_base = 0xe2000000);
+
+  /* HBM edge lengths */
+  PROVIDE(__hbm_west_length = 0x20000000);
+  PROVIDE(__hbm_north_length = 0x1000000);
+  PROVIDE(__hbm_east_length = 0x1000000);
+  PROVIDE(__hbm_south_length = 0x1e000000);
 }

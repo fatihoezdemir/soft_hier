@@ -82,7 +82,7 @@ examples/SoftHier/assembled/DQ/HBM_EDGE_PLACEMENT.md
 examples/SoftHier/assembled/DQ/scripts/utils/parse_perf.py
 examples/SoftHier/assembled/DQ/software/main_test.c
 .gitignore
-examples/SoftHier/assembled/DQ/software/SummaGEMM/include/vq_*
+examples/SoftHier/assembled/DQ/software/SummaGEMM/include/vq_
 examples/SoftHier/assembled/DQ/test_split_k.py
 examples/SoftHier/assembled/DQ/scripts/debug_vq_data.py
 examples/SoftHier/assembled/DQ/scripts/test_fp16_conversion.py
@@ -107,3 +107,4 @@ examples/SoftHier/assembled/DQ/software/include/spatz_compute.h.cpp
 # VQ / VPTQ runtime artifacts
 vptq_codebook_main_1.npy
 vptq_indices_main_1.npy
+examples/SoftHier/assembled/DQ/software/SummaGEMM/include/vq_debug.h

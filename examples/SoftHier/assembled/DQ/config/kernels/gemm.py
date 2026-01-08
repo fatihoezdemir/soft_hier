@@ -75,14 +75,14 @@ class SummaGEMM(BaseKernel):
         # GEMM parameters - can be overridden via kwargs
         self.dtype = kwargs.get('dtype', 'fp16')
         self.compute_kernel_gemm = kwargs.get('compute_kernel_gemm', 1)
-        self.m_size = kwargs.get('M', kwargs.get('m_size', 512))
-        self.n_size = kwargs.get('N', kwargs.get('n_size', 512))
-        self.k_size = kwargs.get('K', kwargs.get('k_size', 512))
+        self.m_size = kwargs.get('M', kwargs.get('m_size', 512*2))
+        self.n_size = kwargs.get('N', kwargs.get('n_size', 512*2))
+        self.k_size = kwargs.get('K', kwargs.get('k_size', 512*2))
 
         # Tile sizes
-        self.m_tile = kwargs.get('m_tile', 128)
-        self.n_tile = kwargs.get('n_tile', 128)
-        self.k_tile = kwargs.get('k_tile', 128)
+        self.m_tile = kwargs.get('m_tile', 128*2)
+        self.n_tile = kwargs.get('n_tile', 128*2)
+        self.k_tile = kwargs.get('k_tile', 128*2)
 
         # SUMMA cluster configuration
         self.summa_scale_x = kwargs.get('summa_scale_x', 4)
@@ -126,7 +126,7 @@ class SummaGEMM(BaseKernel):
         #  'acc_load_store' - DQ-based, with vlxblk and stride segment store instruction (only col-major like vptq, aqlm etc unsupported)
 
         self.kernel_variant = kwargs.get('kernel_variant', 'baseline' if self.vq_enabled else 'baseline')
-        self.vq_algorithm_name = kwargs.get('vq_algorithm', 'vptq')
+        self.vq_algorithm_name = kwargs.get('vq_algorithm', 'aqlm')
         # Create VQ algorithm instance via factory
         enable_transpose = kwargs.get('enable_transpose', True) if ( self.kernel_variant == 'baseline' )and self.vq_algorithm_name == 'vptq' else False
         self.vq_alg = create_algorithm(

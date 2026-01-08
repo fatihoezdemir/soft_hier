@@ -108,7 +108,11 @@ static inline void summa_vq_reduce_partials_fp16(const SummaGEMMInfo* info, uint
 #endif
 }
 
-// need to do additional check row_length * VQ_GROUP_SIZE <= VLMAX(e16, m8)
+static inline void summa_vq_dequantize_tile_overhead(const SummaGEMMInfo* info, uint32_t dst_L1_W, int buffer_idx,
+                                                     uint32_t src_L1_Scales, int k_tile, uint32_t k_start_row,
+                                                     uint32_t k_rows);
+
+// Guard: row_length * VQ_GROUP_SIZE must fit within VLMAX(e16, m8); otherwise use the chunked path.
 /* AQLM Vector  Dequantization Algorithm
 Equation : decoding 1 centroid group i  W_hat[i]= scale[row]* (cb1[idx1[i]] +cb2[idx2[i]])
 W_hat[row]= concat( W_hat[i])
@@ -118,7 +122,7 @@ instead of ld a,b add c=a+b mul  d=s*c st d
 we do ld a mul c=a*s ld b macc c+= b*s st c so we overlap load stroe units with  fpu units
 
 */
-static inline void summa_vq_dequantize_tile(const SummaGEMMInfo* info, uint32_t dst_L1_W, int buffer_idx,
+static inline void summa_vq_dequantize_tile_arith(const SummaGEMMInfo* info, uint32_t dst_L1_W, int buffer_idx,
                                             uint32_t src_L1_Scales, int k_tile, uint32_t k_start_row,
                                             uint32_t k_rows) {
 
@@ -140,7 +144,11 @@ static inline void summa_vq_dequantize_tile(const SummaGEMMInfo* info, uint32_t 
                       k_start_row * info->vq.N_tile_compressed * VQ_GROUP_SIZE;
     const uint32_t row_length = info->vq.N_tile_compressed; // Groups per row
     const uint32_t avl_elems  = row_length * VQ_GROUP_SIZE;
-    uint32_t vl_elems         = 0;
+    if (avl_elems > vlmax_e16m8()) {
+        summa_vq_dequantize_tile_overhead(info, dst_L1_W, buffer_idx, src_L1_Scales, k_tile, k_start_row, k_rows);
+        return;
+    }
+    uint32_t vl_elems = 0;
 
     // fp16
     asm volatile("vsetvli %0, %1, e16, m8, ta, ma" : "=r"(vl_elems) : "r"(avl_elems));
@@ -178,6 +186,121 @@ static inline void summa_vq_dequantize_tile(const SummaGEMMInfo* info, uint32_t 
               "r"(W_out_row),                               // %8
               "r"(scale_ptr)                                //%9
             : "t0", "t1", "v0", "v1", "v8", "v16", "v24", "fa0", "memory");
+    }
+}
+static inline void summa_vq_dequantize_tile(const SummaGEMMInfo* info, uint32_t dst_L1_W, int buffer_idx,
+                                            uint32_t src_L1_Scales, int k_tile, uint32_t k_start_row,
+                                            uint32_t k_rows) {
+
+    if (k_rows == 0) {
+        return;
+    }
+    (void)k_tile;
+    // Get base addresses for indices and codebooks
+    const uint8_t* idx_cb0_base = (const uint8_t*)(uintptr_t)((buffer_idx == 0) ? info->vq.L1_IDX1[0]
+                                                                                : info->vq.L1_IDX2[0]);
+    const uint8_t* idx_cb1_base = (const uint8_t*)(uintptr_t)((buffer_idx == 0) ? info->vq.L1_IDX1[1]
+                                                                                : info->vq.L1_IDX2[1]);
+    const uint16_t* cb0_base = (const uint16_t*)(uintptr_t)info->vq.L1_CB[0];
+    const uint16_t* cb1_base = (const uint16_t*)(uintptr_t)info->vq.L1_CB[1];
+    const uint16_t* scales   = (const uint16_t*)(uintptr_t)src_L1_Scales + k_start_row;
+
+    // Keep codebook base addresses pinned to the registers the custom VLBLK instruction consumes (t0/t1)
+    uint16_t* W_out           = (uint16_t*)(uintptr_t)dst_L1_W +
+                      k_start_row * info->vq.N_tile_compressed * VQ_GROUP_SIZE;
+    const uint32_t row_length = info->vq.N_tile_compressed; // Groups per row
+    const uint32_t avl_elems  = row_length * VQ_GROUP_SIZE;
+    if (avl_elems > vlmax_e16m8()) {
+        summa_vq_dequantize_tile_overhead(info, dst_L1_W, buffer_idx, src_L1_Scales, k_tile, k_start_row, k_rows);
+        return;
+    }
+    uint32_t vl_elems = 0;
+
+    // fp16
+    asm volatile("vsetvli %0, %1, e16, m8, ta, ma" : "=r"(vl_elems) : "r"(avl_elems));
+    uint32_t groups_this_iter    = vl_elems / VQ_GROUP_SIZE;
+    const uint32_t payload_elems = groups_this_iter * VQ_GROUP_SIZE;
+    for (uint32_t r = 0; r < k_rows; ++r) {
+        // Get row-specific pointers
+        const uint8_t* idx_cb0_row = idx_cb0_base + (k_start_row + r) * row_length;
+        const uint8_t* idx_cb1_row = idx_cb1_base + (k_start_row + r) * row_length;
+        uint16_t* W_out_row        = W_out + r * info->vq.N_tile_compressed * VQ_GROUP_SIZE;
+        // Load scale for this row (1 scale per K-dimension row)
+        const uint16_t* scale_ptr = &scales[r];
+        asm volatile(
+            "flh fa0, (%9)\n"                       // load scale of row
+            "vsetvli   zero, %4, e8,  m1, ta, ma\n" // set vl to to load  8-bit indices
+            "vle8.v    v0, (%0)\n"                  // load idx matrix of cb1
+            "vle8.v    v1, (%1)\n"                  // load idx matrix of cb2
+            "vsetvli   zero, %5, e16, m8, ta, ma\n" // re-set vl to vector index block load contiguous centroid grouops
+            "mv        t0, %2\n"                    // cb0 address
+            ".word     %6\n"                        // vector index block load idx0 centroids
+            "mv        t1, %3\n"                    // cb1 base address
+            ".word     %7\n"                        // vector index block load idx1 centroids
+            "vfadd.vv  v24, v8, v16\n"              // c = a + b
+            "vfmul.vf  v24, v24, fa0\n"             // c *= scale
+            "vse16.v   v24, (%8)\n"                 // store
+            :
+            : "r"(idx_cb0_row),                             // %0
+              "r"(idx_cb1_row),                             // %1
+              "r"(cb0_base),                                // %2
+              "r"(cb1_base),                                // %3
+              "r"(groups_this_iter),                        // %4
+              "r"(payload_elems),                           // %5
+              "i"(VLBLK1EI8_V(RVV_V8, RVV_V0, RVX_T0, 1)),  // %6
+              "i"(VLBLK1EI8_V(RVV_V16, RVV_V1, RVX_T1, 1)), // %7
+              "r"(W_out_row),                               // %8
+              "r"(scale_ptr)                                //%9
+            : "t0", "t1", "v0", "v1", "v8", "v16", "v24", "fa0", "memory");
+    }
+}
+
+// Baseline dequantizer: process one group at a time using scalar address calculation (no VLBLK).
+static inline void summa_vq_dequantize_tile_baseline(const SummaGEMMInfo* info, uint32_t dst_L1_W, int buffer_idx,
+                                                     uint32_t src_L1_Scales, int k_tile, uint32_t k_start_row,
+                                                     uint32_t k_rows) {
+    if (k_rows == 0) {
+        return;
+    }
+    (void)k_tile;
+
+    const uint8_t* idx_cb0_base = (const uint8_t*)(uintptr_t)((buffer_idx == 0) ? info->vq.L1_IDX1[0]
+                                                                                : info->vq.L1_IDX2[0]);
+    const uint8_t* idx_cb1_base = (const uint8_t*)(uintptr_t)((buffer_idx == 0) ? info->vq.L1_IDX1[1]
+                                                                                : info->vq.L1_IDX2[1]);
+    const uint16_t* cb0_base = (const uint16_t*)(uintptr_t)info->vq.L1_CB[0];
+    const uint16_t* cb1_base = (const uint16_t*)(uintptr_t)info->vq.L1_CB[1];
+    const uint16_t* scales   = (const uint16_t*)(uintptr_t)src_L1_Scales + k_start_row;
+
+    uint16_t* W_out           = (uint16_t*)(uintptr_t)dst_L1_W +
+                      k_start_row * info->vq.N_tile_compressed * VQ_GROUP_SIZE;
+    const uint32_t row_length = info->vq.N_tile_compressed; // Groups per row
+    const uint32_t group_elems = VQ_GROUP_SIZE;
+
+    // Fixed VL for a single centroid group.
+    asm volatile("vsetvli zero, %0, e16, m1, ta, ma" ::"r"(group_elems));
+
+    for (uint32_t r = 0; r < k_rows; ++r) {
+        const uint8_t* idx_cb0_row = idx_cb0_base + (k_start_row + r) * row_length;
+        const uint8_t* idx_cb1_row = idx_cb1_base + (k_start_row + r) * row_length;
+        uint16_t* W_out_row        = W_out + r * info->vq.N_tile_compressed * VQ_GROUP_SIZE;
+        const uint16_t* scale_ptr  = &scales[r];
+
+        for (uint32_t g = 0; g < row_length; ++g) {
+            const uint16_t* a = cb0_base + (unsigned)idx_cb0_row[g] * VQ_GROUP_SIZE;
+            const uint16_t* b = cb1_base + (unsigned)idx_cb1_row[g] * VQ_GROUP_SIZE;
+            uint16_t* out_ptr = W_out_row + (uint32_t)g * VQ_GROUP_SIZE;
+
+            asm volatile("flh      fa0, (%[s])\n"
+                         "vle16.v  v0, (%[a])\n"
+                         "vle16.v  v1, (%[b])\n"
+                         "vfadd.vv v2, v0, v1\n"
+                         "vfmul.vf v2, v2, fa0\n"
+                         "vse16.v  v2, (%[o])\n"
+                         :
+                         : [a] "r"(a), [b] "r"(b), [s] "r"(scale_ptr), [o] "r"(out_ptr)
+                         : "v0", "v1", "v2", "fa0", "memory");
+        }
     }
 }
 

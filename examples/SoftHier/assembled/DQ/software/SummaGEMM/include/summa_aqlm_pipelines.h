@@ -15,11 +15,11 @@ static inline void run_gemv_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
         summa_partition_k_rows(info->K_tile, info->spatz_sid, info->spatz_num, &deq_k_start, &deq_k_rows);
     }
 
-    if (tiles <= 0) {
-        flex_global_barrier_xy();
-        return;
-    }
-
+  
+//   if (tiles <= 0) {
+//         flex_global_barrier_xy();
+//         return;
+//     }
     uint32_t x_buffers[2] = {info->L1_X1, info->L1_X2};
     uint32_t w_buffers[2] = {info->L1_W1, info->L1_W2};
 #if VQ_USE_SCALES == 1
@@ -53,10 +53,12 @@ static inline void run_gemv_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
 #endif
         }
     } else if (deq_k_rows > 0) {
-        if (flex_get_cluster_id() == 0)
+        if (flex_get_cluster_id() == 0 & flex_get_core_id()==0)
             flex_timer_start();
-        summa_vq_dequantize_tile(info, w_buffers[0], 0, scale_buffers[0], 0, deq_k_start, deq_k_rows);
-        if (flex_get_cluster_id() == 0)
+        // summa_vq_dequantize_tile(info, w_buffers[0], 0, scale_buffers[0], 0, deq_k_start, deq_k_rows);
+        // summa_vq_dequantize_tile_baseline(info, w_buffers[0], 0, scale_buffers[0], 0, deq_k_start, deq_k_rows);
+        summa_vq_dequantize_tile_arith(info, w_buffers[0], 0, scale_buffers[0], 0, deq_k_start, deq_k_rows);
+        if (flex_get_cluster_id() == 0 & flex_get_core_id()==0)
             flex_timer_end();
     }
     flex_intra_cluster_sync();
@@ -111,10 +113,13 @@ static inline void run_gemv_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
                 uint32_t dst_w     = w_buffers[next_deq_tile & 0x1];
                 int buffer_idx     = next_deq_tile & 0x1;
                 uint32_t src_scale = scale_buffers[buffer_idx];
-                if (flex_get_cluster_id() == 0)
+                if (flex_get_cluster_id() == 0 && flex_get_core_id()==0)
                     flex_timer_start();
-                summa_vq_dequantize_tile(info, dst_w, buffer_idx, src_scale, next_deq_tile, deq_k_start, deq_k_rows);
-                if (flex_get_cluster_id() == 0)
+                // summa_vq_dequantize_tile(info, dst_w, buffer_idx, src_scale, next_deq_tile, deq_k_start, deq_k_rows);
+                // summa_vq_dequantize_tile_baseline(info, dst_w, buffer_idx, src_scale, next_deq_tile, deq_k_start, deq_k_rows);
+                summa_vq_dequantize_tile_arith(info, dst_w, buffer_idx, src_scale, next_deq_tile, deq_k_start, deq_k_rows);
+                
+                if (flex_get_cluster_id() == 0 && flex_get_core_id()==0)
                     flex_timer_end();
                 ++next_deq_tile;
             }
@@ -147,11 +152,8 @@ static inline void run_gemv_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
 
                 if (((info->cluster_in_group_id_x >= bid && info->cluster_in_group_id_x < eid) && eid > bid) ||
                     ((info->cluster_in_group_id_x >= bid || info->cluster_in_group_id_x < eid) && eid <= bid)) {
-                    if (flex_is_dm_core() && flex_get_cluster_id() == 0)
-                        flex_timer_start();
+
                     summa_reduce_and_store_Z(info, *DMA_L1_Z, true);
-                    if (flex_is_dm_core() && flex_get_cluster_id() == 0)
-                        flex_timer_end();
                 }
 
                 info->store_id = start_id;
@@ -173,7 +175,7 @@ static inline void run_gemv_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
     // EPILOGUE: drain last tile and finalize
     // ─────────────────────────────────────────────────────────────────
     if (info->group_reduction == 1) {
-        flex_global_barrier_xy();
+        // flex_global_barrier_xy();
     } else {
         grid_sync_group_barrier_xy(&(info->group));
     }
@@ -331,7 +333,7 @@ static inline void run_gemv_pipelinevq_spatz(SummaGEMMInfo* info, int m, int n, 
 
     // PIPELINE EPILOGUE: record current output tile and swap Z buffers once
     if (info->group_reduction == 1) {
-        flex_global_barrier_xy();
+        // flex_global_barrier_xy();
     } else {
         grid_sync_group_barrier_xy(&(info->group));
     }
@@ -355,8 +357,19 @@ static inline void run_gemv_pipelinevq_fused(SummaGEMMInfo* info, int m, int n, 
                                              uint32_t* REDMULE_L1_Z) {
     const int tiles       = info->K_iter;
     uint32_t x_buffers[2] = {info->L1_X1, info->L1_X2};
-    const int SPATZ_CORE  = 2; // dedicate core 2 for fused compute (matches other VQ pipelines)
     uint32_t core_id      = flex_get_core_id();
+    uint32_t k_start_row       = 0;
+    uint32_t k_rows            = info->K_tile;
+    uint32_t partial_L1_Z      = *REDMULE_L1_Z;
+#if defined(KERNEL_VARIANT_FUSED) && (KERNEL_VARIANT_FUSED == 1)
+    const uint32_t reduce_core = info->spatz_compute_core;
+    if (info->spatz_attached) {
+        partial_L1_Z = info->L1_Z_partial[info->spatz_sid];
+        summa_partition_k_rows(info->K_tile, info->spatz_sid, info->spatz_num, &k_start_row, &k_rows);
+    } else {
+        k_rows = 0;
+    }
+#endif
 #if VQ_USE_SCALES == 1
     uint32_t scale_buffers[2] = {info->vq.L1_Scales[0], info->vq.L1_Scales[1]};
 #else
@@ -370,11 +383,11 @@ static inline void run_gemv_pipelinevq_fused(SummaGEMMInfo* info, int m, int n, 
             summa_load_X_tile(info, x_buffers[0], m, n, 0);
         }
         if (info->cluster_for_colwise == 1) {
-            if (flex_get_cluster_id() == 0)
-                flex_timer_start();
+            // if (flex_get_cluster_id() == 0)
+            //     flex_timer_start();
             summa_vq_load_indices(info, 0, m, n, 0);
-            if (flex_get_cluster_id() == 0)
-                flex_timer_end();
+            // if (flex_get_cluster_id() == 0)
+            //     flex_timer_end();
 #if VQ_USE_SCALES == 1
             summa_vq_load_scales(info, scale_buffers[0], m, n, 0);
 #endif
@@ -426,12 +439,34 @@ static inline void run_gemv_pipelinevq_fused(SummaGEMMInfo* info, int m, int n, 
                 }
             }
         }
+#if defined(KERNEL_VARIANT_FUSED) && (KERNEL_VARIANT_FUSED == 1)
         // Trigger compute for tile (k-1)
-        if (core_id == SPATZ_CORE) {
-            summa_vq_dequantize_tile_fused(info, *REDMULE_L1_Z, spatz_idx, spatz_scale, spatz_x, k - 1);
+        if (info->spatz_attached && k_rows > 0) {
+        if (flex_get_cluster_id() == 0 & flex_get_core_id()==0)
+        flex_timer_start();
+            summa_vq_dequantize_tile_fused(info, partial_L1_Z, spatz_idx, spatz_scale, spatz_x, k - 1, k_start_row,
+                                           k_rows);
+                                                   if (flex_get_cluster_id() == 0 & flex_get_core_id()==0)
+                                                   flex_timer_end();
         }
+#else
+        const int SPATZ_CORE = 2;
+        if (core_id == SPATZ_CORE) {
+            summa_vq_dequantize_tile_fused(info, partial_L1_Z, spatz_idx, spatz_scale, spatz_x, k - 1, k_start_row,
+                                           k_rows);
+        }
+#endif
         flex_intra_cluster_sync();
     }
+
+    // Reduce partial vectors from each Spatz core into the shared output buffer
+#if defined(KERNEL_VARIANT_FUSED) && (KERNEL_VARIANT_FUSED == 1)
+    flex_intra_cluster_sync();
+    if (info->spatz_num > 0 && info->spatz_attached && core_id == reduce_core) {
+        summa_vq_reduce_partials_fp16(info, *REDMULE_L1_Z);
+    }
+    flex_intra_cluster_sync();
+#endif
 
     // Drain final tile and swap Z buffers for next iteration
     if (info->group_reduction == 1) {
@@ -514,7 +549,9 @@ static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
     } else if (deq_k_rows > 0) {
         if (flex_get_cluster_id() == 0)
             flex_timer_start();
-        summa_vq_dequantize_tile(info, w_buffers[0], 0, scale_buffers[0], 0, deq_k_start, deq_k_rows);
+        summa_vq_dequantize_tile_arith(info, w_buffers[0], 0, scale_buffers[0], 0, deq_k_start, deq_k_rows);
+        // summa_vq_dequantize_tile_baseline(info, w_buffers[0], 0, scale_buffers[0], 0, deq_k_start, deq_k_rows);
+
         if (flex_get_cluster_id() == 0)
             flex_timer_end();
     }
@@ -588,7 +625,8 @@ static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
                 uint32_t src_scale = scale_buffers[buffer_idx];
                 if (flex_get_cluster_id() == 0)
                     flex_timer_start();
-                summa_vq_dequantize_tile(info, dst_w, buffer_idx, src_scale, next_deq_tile, deq_k_start, deq_k_rows);
+                summa_vq_dequantize_tile_arith(info, dst_w, buffer_idx, src_scale, next_deq_tile, deq_k_start, deq_k_rows);
+                // summa_vq_dequantize_tile_baseline(info, dst_w, buffer_idx, src_scale, next_deq_tile, deq_k_start, deq_k_rows);
                 if (flex_get_cluster_id() == 0)
                     flex_timer_end();
                 ++next_deq_tile;
@@ -635,7 +673,7 @@ static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
     ═══════════════════════════════════════════════════════════════════
     */
     if (info->group_reduction == 1) {
-        flex_global_barrier_xy();
+        // flex_global_barrier_xy();
     } else {
         grid_sync_group_barrier_xy(&(info->group));
     }

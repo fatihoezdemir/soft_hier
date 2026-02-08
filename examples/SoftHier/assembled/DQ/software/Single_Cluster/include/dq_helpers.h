@@ -60,7 +60,7 @@ void dequant_group(const uint16_t* a /** cb0[idx0[i]] */, const uint16_t* b, /**
                  "vmv.v.i v2, 0\n\t"
                  "vle16.v v0, (%[a])\n\t"
                  "vle16.v v1, (%[b])\n\t"
-                 "flw fa0, (%[s])\n\t"      // f0 = scale (fp32) scale swere uinsigned
+                 "flw fa0, (%[s])\n\t"      // f0 = scale (fp16)
                  "vfadd.vv v2, v0, v1\n\t"  // v2 = a * s
                  "vfmul.vf v3, v2, fa0\n\t" // v2 += b * s => (a+b)s
                  "vse16.v v3, (%[out])\n\t" // store
@@ -185,7 +185,7 @@ void dequant_groupmacc_improved(const uint8_t* idx0, const uint8_t* idx1, const 
     uint32_t group_offset     = 0;
     asm volatile("mv t0, %0" : : "r"(cb0_ptr) : "t0");
     asm volatile("mv t1, %0" : : "r"(cb1_ptr) : "t1");
-    asm volatile("flw fa0, (%0)" ::"r"(scale) : "fa0", "memory");
+    asm volatile("flh fa0, (%0)" ::"r"(scale) : "fa0", "memory");
     while (remaining_groups > 0) {
         const uint32_t avl_elems = (uint32_t)remaining_groups * VQ_GROUP_SIZE;
         uint32_t vl_elems        = 0;
@@ -252,7 +252,7 @@ void dequantize_block_tile_compact_fused_gemvs(uint16_t row_start, uint16_t rows
 
             // Load scale and x into FP registers
 
-            asm volatile("flw fa0, (%0)" ::"r"(scale_resaddr) : "fa0", "memory");
+            asm volatile("flh fa0, (%0)" ::"r"(scale_resaddr) : "fa0", "memory");
             // asm volatile("flw fa1, (%0)" ::"r"(x_ptr) : "fa1", "memory");
             asm volatile("vmv.v.x v24, t0\n\t" ::);
 

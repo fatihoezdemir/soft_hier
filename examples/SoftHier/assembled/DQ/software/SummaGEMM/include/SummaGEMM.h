@@ -129,8 +129,8 @@ void SummaGEMMRun(SummaGEMMInfo* info) {
 #if VQ_ENABLED == 1
                 run_gemm_pipelinevq(info, m, n, &DMA_L1_Z, &REDMULE_L1_Z);
                 // run_gemm_pipelinevptq_baseline(info, m, n, &DMA_L1_Z, &REDMULE_L1_Z);
-
-#else
+                
+                #else
                 run_gemm_pipeline(info, m, n, &DMA_L1_Z, &REDMULE_L1_Z);
 #endif
             }

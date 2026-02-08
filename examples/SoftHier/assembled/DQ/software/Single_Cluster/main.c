@@ -44,16 +44,26 @@ const int REDMULE_ATTACHED_CORE = 0; // by default, redmule is always attached t
 #include <stdio.h>
 
 // Tiling configuration TODO make a tilinginfo struct
-const int NUM_TILES = 1;
+const int NUM_TILES = 4;
 
 int main() {
 
     uint32_t eoc_val = 0;
-    flex_barrier_xy_init();
-    flex_global_barrier_xy();
+    const uint32_t cid = flex_get_cluster_id();
+
+    if (cid == 0 && flex_get_core_id() == 0) {
+        printf("entered main\n");
+    }
+
+    // Single_Cluster app: park non-zero clusters to avoid multi-cluster barrier deadlocks.
+    if (cid != 0) {
+        while (1) {
+            asm volatile("wfi");
+        }
+    }
+
     flex_alloc_init();
     flex_intra_cluster_sync(); // Cluster barrier
-    flex_global_barrier_xy();
 
     uint32_t total_l1_required =
         (VQ_CB_NUM_CENTROIDS * VQ_GROUP_SIZE * VQ_NUM_CBS + FP16_M) * sizeof(uint16_t) + // codebook + scales
@@ -61,7 +71,11 @@ int main() {
         2 * ROWS_PER_TILE * FP16_N * sizeof(uint16_t) +                                  // double A buffers
         FP16_M * GROUPS_PER_TILE * VQ_GROUP_SIZE * sizeof(uint16_t) +                    // W buffer
         ROWS_PER_TILE * GROUPS_PER_TILE * VQ_GROUP_SIZE * sizeof(uint16_t);              // C buffer
-
+ 
+ 
+    if (flex_get_core_id() == 0 && flex_get_cluster_id() == 0) {
+        printf("starting the program\n");
+    }
     if (total_l1_required > ARCH_CLUSTER_TCDM_SIZE) {
         if (flex_get_core_id() == 0 && flex_get_cluster_id() == 0) {
             printf("ERROR: L1 overflow, tiles too big! Need %uKB, have %uKB\n", total_l1_required >> 10,
@@ -77,27 +91,28 @@ int main() {
 #if GEMM == 1
     // [INFO] Running double-buffered GEMM with pipelined execution
 
-    // dq_gemm_triple_buffer_baseline();
-    dq_gemm_triple_buffer_baselineu8();
+    dq_gemm_triple_buffer_baseline();
+    // dq_gemm_triple_buffer_baselineu8();
 
 #elif GEMV == 1
     //[INFO] Running double-buffered GEMV
-    // dq_gemv_double_buffer_baseline();
-    dq_gemv_double_buffer_extended();
+    dq_gemv_double_buffer_baseline();
+    // dq_gemv_double_buffer_extended();
     // dq_gemv_double_buffer_fused();
 
 #endif
     /**************************************/
     /*  Program Execution Region -- Stop  */
     /**************************************/
-    flex_global_barrier_xy();
     if (flex_get_core_id() == 0 && flex_get_cluster_id() == 0) {
         printf("\nfinished!");
         printf("matrix_cb_fp16 address: 0x%08x (expected in HBM_WEST: 0xc0000000-0xdfffffff)\n",
                (uintptr_t)&matrix_cb_fp16[0]);
         printf("matrix_scales_fp16 address: 0x%08x\n", (uintptr_t)&matrix_scales_fp16[0]);
     }
-    flex_global_barrier_xy();
-    flex_eoc(eoc_val);
+    flex_intra_cluster_sync();
+    if (flex_get_core_id() == 0) {
+        flex_eoc(eoc_val);
+    }
     return 0;
 }

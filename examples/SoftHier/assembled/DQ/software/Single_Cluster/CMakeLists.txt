@@ -3,10 +3,10 @@ set(SRC_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/main.c
 )
 
-# Specify the source files for the "test" module
-set(TEST_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/main_test.c
-)
+# # Specify the source files for the "test" module
+# set(TEST_SOURCES
+#     ${CMAKE_CURRENT_SOURCE_DIR}/main_test.c
+# )
 
 # Add DEBUG definition conditionally
 if(DEFINED ENV{DEBUG} OR CMAKE_BUILD_TYPE STREQUAL "Debug")

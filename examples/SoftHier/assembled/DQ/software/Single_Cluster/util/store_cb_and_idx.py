@@ -11,7 +11,7 @@ flex_utils_path = os.path.join(script_dir, '../../../../../../soft_hier/flex_clu
 sys.path.append(flex_utils_path)
 from flex_libfp8 import write_matrix_to_header, generate_sparse_fp8_matrix, generate_fp8_matrix, extract_nm_sparsity, write_index_to_header_multi_format,write_indices_u16
 
-out_features = 256
+out_features = 512  # Changed from 256 to match available vq_cache files
 in_features  = out_features
 
 dtype_str= "16" #if dtype==torch.float16 else "32"
@@ -21,7 +21,6 @@ args = Namespace(#TODO save  args from quantizer script
     out_group_size=1,# default is 1
     in_group_size=8, #default is 8 
     
-
     num_codebooks=2,  # Only 2 codebooks as per notebook
     nbits_per_codebook=8,  # 2^8 = 256 centroids per codebook
     # codebook_size=4096,  # Number of centroids
@@ -56,14 +55,15 @@ def main():
     cli_args = parser.parse_args()
     kernel_type=cli_args.kernel
     M, N, K = cli_args.M, cli_args.N, cli_args.K
-    parent_dir ="/home/fo/Desktop/master/soft_hier/quantfiles/"
-    config_str ="_cb"+ str(args.num_codebooks)+ '_B'+str(args.nbits_per_codebook)+'_g'+str(args.in_group_size)
-    dim_str = "M_" + str(M) + "_N" + str(N)
-    filename_W='aqlm_W'+config_str+dim_str +'.npy'
-    filename_indices='aqlm_idx'+config_str+dim_str +'.npy'
-    filename_codebooks = 'aqlm_cb'+config_str+dim_str +'.npy'
-    filename_scales = 'aqlm_scales'+config_str+dim_str +'.npy'
-    filename_W_hat = "aqlm_W_hat" +config_str+dim_str +'.npy'
+    parent_dir ="/home/fo/Desktop/master/soft_hier/examples/SoftHier/assembled/DQ/vq_cache/"
+    # New naming convention: aqlm_gen2x8_dim256x256_*.npy
+    config_str = f"_gen{args.num_codebooks}x{args.nbits_per_codebook}"
+    dim_str = f"_dim{M}x{N}"
+    filename_W='aqlm'+config_str+dim_str +'_W_orig.npy'
+    filename_indices='aqlm'+config_str+dim_str +'_idx.npy'
+    filename_codebooks = 'aqlm'+config_str+dim_str +'_cb.npy'
+    filename_scales = 'aqlm'+config_str+dim_str +'_scales.npy'
+    filename_W_hat = "aqlm" +config_str+dim_str +'_W_hat.npy'
     W=np.load(parent_dir+filename_W)
     indices= np.load(parent_dir+filename_indices)
     codebooks = np.load(parent_dir+filename_codebooks)
@@ -76,7 +76,7 @@ def main():
     print(f"indices shape {indices.shape}")
     print(f"scales shape {scales.shape}")
     # print(f"indices \n {indices}")
-    print("scales",scales)
+    # print("scales",scales)
     # print(f"orig codebook\n  {codebooks}")
 
     print(codebooks[1].reshape(-1))
@@ -85,15 +85,10 @@ def main():
     indices_packed =  (indices[:,:,1].astype(np.uint16) << 8) | indices[:,:,0].astype(np.uint16)
     indices_flattened = np.concatenate ( (indices[:,:,0].astype(np.uint8),indices[:,:,1].astype(np.uint8)   )   )# axis 0
     print("codebook flattened ",codebook_flattened.shape)
-
     print("packing indices to  ",indices_packed.shape)
     print("flattening indices to  ",indices_flattened.shape)
-
     print("Result is 1 packed uint16 index  that contains both uint8 indices : idx_codebook1|idx_codebook0  ",)
-
     # print("indices_packed  ",indices_packed)
-
-
 
     rng = np.random.default_rng(seed=42)
     filename_activation=f'{kernel_type}_M{str(M)}_N{str(N)}_K{str(K)}_activation.npy'
@@ -120,8 +115,6 @@ def main():
     # # Compute output path
     script_dir = os.path.dirname(os.path.realpath(__file__))
     include_dir = os.path.abspath(os.path.join(script_dir, '..', 'include'))
-    # if(kernel_type=='gemm'):
-    include_dir = os.path.abspath(os.path.join(script_dir, '../../software', 'include'))
     os.makedirs(include_dir, exist_ok=True)
     header_path = os.path.join(include_dir, 'dq_data_hbm.h')
 
@@ -157,9 +150,7 @@ def main():
             write_matrix_to_header(f, 'matrix_idx0_uint8', indices[:,:,0].astype(np.uint8), fmt='uint8', dtype='uint8_t')#args.input_format)
             write_matrix_to_header(f, 'matrix_idx1_uint8', indices[:,:,1].astype(np.uint8), fmt='uint8', dtype='uint8_t')#args.input_format)
             write_matrix_to_header(f, 'matrix_idx_uint8', indices_flattened, fmt='uint8', dtype='uint8_t')#args.input_format)
-
             write_matrix_to_header(f, 'matrix_scales_fp16', scales, fmt='fp16', dtype='uint16_t')#args.input_format)
-
             write_matrix_to_header(f, 'matrix_activation_fp16', Act, fmt='fp16', dtype='uint16_t')#args.input_format)
             write_matrix_to_header(f, 'matrix_golden_fp16', golden, fmt='fp16', dtype='uint16_t')#args.input_format)
         # elif(kernel_type=='mhsa'):

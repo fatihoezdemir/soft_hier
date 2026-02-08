@@ -94,7 +94,7 @@ void dq_gemv_double_buffer_baseline() {
             int nextIdx = curIdx ^ 1;
             debug(" \t[DMA] Load indices for tile %u to B[%d] (overlapped with dequant)\n\t", bt + 1, nextIdx);
             // flex_timer_start();
-            dq_load_indices_tile((void*)l1_buffers.idx0_buf[nextIdx], &matrix_idx_packed_uint16[0], bt + 1);
+            dq_load_indices_tile((void*)l1_buffers.idx0_buf_packed[nextIdx], &matrix_idx_packed_uint16[0], bt + 1);
             // flex_timer_end();
             debug(" \t[SPATZ] Dequantize tile %u via idx_buf[%d]\n\t", bt, curIdx);
         }
@@ -105,11 +105,9 @@ void dq_gemv_double_buffer_baseline() {
         if (core_id == SPATZ_CORE && CID == 0) {
             debug("\t[REDMULE] Computing x^T * W_tile%u: (1x%u) * (%ux%u) -> (1x%u) \n\t", bt, FP16_M, FP16_M, P, P);
 
-            uint32_t y_tile_size = max_P * sizeof(uint16_t);
-            uint16_t* c_ptr      = (uint16_t*)(uintptr_t)l1_buffers.y_vec;
-            for (int i = 0; i < y_tile_size; ++i) { // TODO temporary solution,fix later
+            uint16_t* c_ptr = (uint16_t*)(uintptr_t)l1_buffers.y_vec;
+            for (uint32_t i = 0; i < P; ++i) {
                 c_ptr[i] = 0;
-                //         // debug("0x%04x ", c_ptr[i]);
             }
             flex_timer_start();
 
@@ -196,6 +194,13 @@ void dq_gemv_double_buffer_extended() {
         g_l1_dq.W_dq     = (uint16_t*)(uintptr_t)flex_l1_malloc(W_buf_size);
         l1_buffers.y_vec = (uint16_t*)(uintptr_t)flex_l1_malloc(y_tile_size);
 
+        if (!l1_buffers.x_vec || !g_l1_dq.W_dq || !l1_buffers.y_vec || !l1_buffers.idx0_buf[0] || !l1_buffers.idx0_buf[1] ||
+            !l1_buffers.idx1_buf[0] || !l1_buffers.idx1_buf[1]) {
+            printf("[ERROR] GEMV extended allocation failed\n");
+            flex_dump_heap();
+            return;
+        }
+
         // Load the input vector x (only needed once)
         debug("[DEBUG][DMA] Load embeddign vector x to l1\n");
         flex_timer_start();
@@ -259,11 +264,9 @@ void dq_gemv_double_buffer_extended() {
         // Step 2: Compute x^T * W_t -> y_t(vertical)
         if (core_id == SPATZ_CORE && CID == 0) {
             debug("\t[REDMULE] Computing x^T * W_tile%u: (1x%u) * (%ux%u) -> (1x%u) \n\t", bt, FP16_M, FP16_M, P, P);
-            uint32_t y_tile_size = max_P * sizeof(uint16_t);
-            uint16_t* c_ptr      = (uint16_t*)(uintptr_t)l1_buffers.y_vec;
-            for (int i = 0; i < y_tile_size; ++i) { // TODO temporary solution,fix later
+            uint16_t* c_ptr = (uint16_t*)(uintptr_t)l1_buffers.y_vec;
+            for (uint32_t i = 0; i < P; ++i) {
                 c_ptr[i] = 0;
-                //         // debug("0x%04x ", c_ptr[i]);
             }
             flex_timer_start();
             flex_redmule_config(1, FP16_M, P); // hardcode r N P

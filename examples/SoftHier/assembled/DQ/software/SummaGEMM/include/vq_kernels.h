@@ -147,6 +147,7 @@ static inline void summa_vq_dequantize_tile_arith(const SummaGEMMInfo* info, uin
     if (avl_elems > vlmax_e16m8()) {
         summa_vq_dequantize_tile_overhead(info, dst_L1_W, buffer_idx, src_L1_Scales, k_tile, k_start_row, k_rows);
         return;
+
     }
     uint32_t vl_elems = 0;
 
@@ -458,7 +459,7 @@ static inline void summa_vq_dequantize_tile_overhead(const SummaGEMMInfo* info, 
                            "i"(VLBLK1EI8_V(RVV_V8, RVV_V0, RVX_T0, 1)),  // %6
                            "i"(VLBLK1EI8_V(RVV_V16, RVV_V1, RVX_T1, 1)), // %7
                            "r"(out_ptr)                                  // %8
-                         : "t0", "t1", "v0", "v1", "v8", "v16", "v24", "memory");
+                         : "t0", "t1", "v0", "v1", "v8", "v16", "v24", "fa0", "memory");
 
             group_offset += groups_this_iter;
             remaining_groups -= groups_this_iter;

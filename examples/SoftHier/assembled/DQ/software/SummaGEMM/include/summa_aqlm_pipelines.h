@@ -6,6 +6,7 @@
 #include "gemm_setup.h"
 #include "summa_dma.h"
 #include "vq_kernels.h"
+
 static inline void run_gemv_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32_t* DMA_L1_Z, uint32_t* REDMULE_L1_Z) {
     const int tiles  = info->K_iter;
     uint32_t core_id = flex_get_core_id();
@@ -549,7 +550,7 @@ static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
     } else if (deq_k_rows > 0) {
         if (flex_get_cluster_id() == 0)
             flex_timer_start();
-        summa_vq_dequantize_tile_arith(info, w_buffers[0], 0, scale_buffers[0], 0, deq_k_start, deq_k_rows);
+        summa_vq_dequantize_tile(info, w_buffers[0], 0, scale_buffers[0], 0, deq_k_start, deq_k_rows);
         // summa_vq_dequantize_tile_baseline(info, w_buffers[0], 0, scale_buffers[0], 0, deq_k_start, deq_k_rows);
 
         if (flex_get_cluster_id() == 0)

@@ -108,3 +108,9 @@ examples/SoftHier/assembled/DQ/software/include/spatz_compute.h.cpp
 vptq_codebook_main_1.npy
 vptq_indices_main_1.npy
 examples/SoftHier/assembled/DQ/software/SummaGEMM/include/vq_debug.h
+spatzpaper2.pdf
+spatzpaper2.txt
+soft_hier_architecture_intro.md
+soft.md
+manim/**
+examples/SoftHier/assembled/DQ/software/Single_Cluster/include/dq_data_hbm.h

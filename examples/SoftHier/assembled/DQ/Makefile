@@ -10,37 +10,36 @@ PYTHON ?= $(SH_DIR)/pyenv_softhier/bin/python3
 # export OMP_NUM_THREADS := 1
 # export MKL_NUM_THREADS := 1
 # export CUDA_LAUNCH_BLOCKING := 1
-ARCH_FILE_DQ ?= $(CUR_DIR)config/arch/arch_summa.py
+ARCH_FILE_DQ ?= $(CUR_DIR)config/arch_dq_sc.py
 ifdef arch
 	ARCH_FILE_DQ = $(realpath $(arch))
 endif
-
 hw:
 	@echo "Compiling SoftHier HW & SW for attention ..."
 	cfg=$(ARCH_FILE_DQ) make -C $(SH_DIR) hw
 export PYTHONPATH := $(CUR_DIR)scripts:$(PYTHONPATH)
 pld_gemm:
-	cd software/util; python store_cb_and_idx.py -kernel gemm
+	cd software/Single_Cluster/util; python store_cb_and_idx.py -kernel gemm
 pld_gemv:
-	cd software/util; python store_cb_and_idx.py -kernel gemv
+	cd software/Single_Cluster/util; python store_cb_and_idx.py -kernel gemv
 dq:
-	DEBUG=1 cfg=$(ARCH_FILE_DQ) app=$(abspath $(CUR_DIR)software) make -C $(SH_DIR) hs run
+	DEBUG=1 cfg=$(ARCH_FILE_DQ) app=$(abspath $(CUR_DIR)software/Single_Cluster) make -C $(SH_DIR) hs run
 dqsw:
-	DEBUG=1 cfg=$(ARCH_FILE_DQ) app=$(abspath $(CUR_DIR)software) make -C $(SH_DIR) sw run
+	DEBUG=1 cfg=$(ARCH_FILE_DQ) app=$(abspath $(CUR_DIR)software/Single_Cluster) make -C $(SH_DIR) sw run
 dq_nodebug:
-	cfg=$(ARCH_FILE_DQ) app=$(abspath $(CUR_DIR)software) make -C $(SH_DIR) hs run
+	cfg=$(ARCH_FILE_DQ) app=$(abspath $(CUR_DIR)software/Single_Cluster) make -C $(SH_DIR) hs run
 pfto:
-	VERIFY_VALUES=0 DEBUG=1 cfg=$(ARCH_FILE_DQ) app=$(abspath $(CUR_DIR)software) make -C $(SH_DIR) hs runv pfto
+	VERIFY_VALUES=0 DEBUG=1 cfg=$(ARCH_FILE_DQ) app=$(abspath $(CUR_DIR)software/Single_Cluster) make -C $(SH_DIR) hs runv pfto
 rund:
-	DEBUG=0 cfg=$(ARCH_FILE_DQ) app=$(abspath $(CUR_DIR)software) make -C $(SH_DIR) hs rund
+	DEBUG=0 cfg=$(ARCH_FILE_DQ) app=$(abspath $(CUR_DIR)software/Single_Cluster) make -C $(SH_DIR) hs rund
 runv:
-	DEBUG=0 cfg=$(ARCH_FILE_DQ) app=$(abspath $(CUR_DIR)software) make -C $(SH_DIR) hs runv
+	DEBUG=0 cfg=$(ARCH_FILE_DQ) app=$(abspath $(CUR_DIR)software/Single_Cluster) make -C $(SH_DIR) hs runv
 dqswv:
 	make pld_gemv;
-	DEBUG=1 cfg=$(ARCH_FILE_DQ) app=$(abspath $(CUR_DIR)software) make -C $(SH_DIR) sw run
+	DEBUG=1 cfg=$(ARCH_FILE_DQ) app=$(abspath $(CUR_DIR)software/Single_Cluster) make -C $(SH_DIR) sw run
 dqswm:
 	make pld_gemm;
-	DEBUG=1 cfg=$(ARCH_FILE_DQ) app=$(abspath $(CUR_DIR)software) make -C $(SH_DIR) sw run
+	DEBUG=1 cfg=$(ARCH_FILE_DQ) app=$(abspath $(CUR_DIR)software/Single_Cluster) make -C $(SH_DIR) sw run
 
 # Test targets
 test:
@@ -228,8 +227,8 @@ VQ_CACHE_DIR ?= ${CUR_DIR}/vq_cache
 REPO_ID ?= ISTA-DASLab/Llama-2-7b-AQLM-2Bit-2x8-hf
 WEIGHT_FILE ?= model.safetensors
 LAYER_PREFIX ?= model.layers.0.mlp.down_proj
-VQ_K ?= 16384
-VQ_N ?= 4096
+VQ_K ?= 512
+VQ_N ?= 512
 vq-download:
 	@echo "Downloading and extracting VQ model from HuggingFace..."
 	@mkdir -p ${VQ_CACHE_DIR}
@@ -450,5 +449,4 @@ tidy:
 		-I$(abspath ../../../../soft_hier/flex_cluster_sdk/runtime/include) \
 		-I$(abspath software/include) \
 		-D__riscv -D__riscv_xlen=32
-
 

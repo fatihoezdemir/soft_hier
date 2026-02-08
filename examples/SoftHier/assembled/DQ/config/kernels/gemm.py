@@ -125,7 +125,7 @@ class SummaGEMM(BaseKernel):
         #  'acc_load' - DQ-based, with vlxblk instruction (for col-major like vptq, use transpose engine)
         #  'acc_load_store' - DQ-based, with vlxblk and stride segment store instruction (only col-major like vptq, aqlm etc unsupported)
 
-        self.kernel_variant = kwargs.get('kernel_variant', 'baseline' if self.vq_enabled else 'baseline')
+        self.kernel_variant = kwargs.get('kernel_variant', 'dq' if self.vq_enabled else 'baseline')
         self.vq_algorithm_name = kwargs.get('vq_algorithm', 'aqlm')
         # Create VQ algorithm instance via factory
         enable_transpose = kwargs.get('enable_transpose', True) if ( self.kernel_variant == 'baseline' )and self.vq_algorithm_name == 'vptq' else False
@@ -169,5 +169,4 @@ class SummaGEMM(BaseKernel):
     def _validate_alignment(self):
         """Validate tile alignment (extended for VQ)."""
         super()._validate_alignment()
-
 

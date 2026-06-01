@@ -7,6 +7,52 @@
 #include "summa_dma.h"
 #include "vq_kernels.h"
 
+// Global default dequant kernel for both GEMM/GEMV paths.
+// Override once (e.g. in main.c before including Summa headers):
+//   #define SUMMA_VQ_DEQ_KERNEL summa_vq_dequantize_tile_baseline
+// Valid options:
+//   summa_vq_dequantize_tile
+//   summa_vq_dequantize_tile_baseline
+//   summa_vq_dequantize_tile_arith
+#define SUMMA_VQ_DEQ_KERNEL summa_vq_dequantize_tile_arith
+#ifndef SUMMA_VQ_DEQ_KERNEL
+#define SUMMA_VQ_DEQ_KERNEL summa_vq_dequantize_tile_baseline
+#endif
+
+// Optional per-path overrides.
+#ifndef SUMMA_GEMM_VQ_DEQ_KERNEL
+#define SUMMA_GEMM_VQ_DEQ_KERNEL SUMMA_VQ_DEQ_KERNEL
+#endif
+
+#ifndef SUMMA_GEMV_VQ_DEQ_KERNEL
+#define SUMMA_GEMV_VQ_DEQ_KERNEL SUMMA_VQ_DEQ_KERNEL
+#endif
+
+#ifndef SUMMA_GEMV_SPATZ_VQ_DEQ_KERNEL
+#define SUMMA_GEMV_SPATZ_VQ_DEQ_KERNEL SUMMA_GEMV_VQ_DEQ_KERNEL
+#endif
+
+#define SUMMA_GEMM_VQ_DEQ_CALL(info, dst_w, buffer_idx, src_scale, tile_idx, deq_k_start, deq_k_rows) \
+    SUMMA_GEMM_VQ_DEQ_KERNEL((info), (dst_w), (buffer_idx), (src_scale), (tile_idx), (deq_k_start), (deq_k_rows))
+
+#define SUMMA_GEMV_VQ_DEQ_CALL(info, dst_w, buffer_idx, src_scale, tile_idx, deq_k_start, deq_k_rows) \
+    SUMMA_GEMV_VQ_DEQ_KERNEL((info), (dst_w), (buffer_idx), (src_scale), (tile_idx), (deq_k_start), (deq_k_rows))
+
+#define SUMMA_GEMV_SPATZ_VQ_DEQ_CALL(info, dst_w, buffer_idx, src_scale, tile_idx, deq_k_start, deq_k_rows) \
+    SUMMA_GEMV_SPATZ_VQ_DEQ_KERNEL((info), (dst_w), (buffer_idx), (src_scale), (tile_idx), (deq_k_start), (deq_k_rows))
+
+typedef void (*summa_vq_deq_kernel_fn_t)(const SummaGEMMInfo*, uint32_t, int, uint32_t, int, uint32_t, uint32_t);
+
+// Compile-time sanity checks: catch typos in kernel macro names early.
+static inline void summa_vq_deq_kernel_macro_sanity(void) {
+    summa_vq_deq_kernel_fn_t gemm_fn       = SUMMA_GEMM_VQ_DEQ_KERNEL;
+    summa_vq_deq_kernel_fn_t gemv_fn       = SUMMA_GEMV_VQ_DEQ_KERNEL;
+    summa_vq_deq_kernel_fn_t gemv_spatz_fn = SUMMA_GEMV_SPATZ_VQ_DEQ_KERNEL;
+    (void)gemm_fn;
+    (void)gemv_fn;
+    (void)gemv_spatz_fn;
+}
+
 static inline void run_gemv_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32_t* DMA_L1_Z, uint32_t* REDMULE_L1_Z) {
     const int tiles  = info->K_iter;
     uint32_t core_id = flex_get_core_id();
@@ -39,6 +85,8 @@ static inline void run_gemv_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
 #endif
     }
     flex_intra_cluster_sync();
+    // Ensure tile-0 indices/scales broadcast is globally visible before tile-0 dequant.
+    grid_sync_group_barrier_xy(&(info->group));
 
     // ─────────────────────────────────────────────────────────────────
     // PROLOGUE P1: DMA X[0] + idx/scale[1] || SPATZ dequantize W[0]
@@ -56,9 +104,8 @@ static inline void run_gemv_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
     } else if (deq_k_rows > 0) {
         if (flex_get_cluster_id() == 0 & flex_get_core_id()==0)
             flex_timer_start();
-        // summa_vq_dequantize_tile(info, w_buffers[0], 0, scale_buffers[0], 0, deq_k_start, deq_k_rows);
-        // summa_vq_dequantize_tile_baseline(info, w_buffers[0], 0, scale_buffers[0], 0, deq_k_start, deq_k_rows);
-        summa_vq_dequantize_tile_arith(info, w_buffers[0], 0, scale_buffers[0], 0, deq_k_start, deq_k_rows);
+        SUMMA_GEMV_VQ_DEQ_CALL(info, w_buffers[0], 0, scale_buffers[0], 0, deq_k_start, deq_k_rows);
+
         if (flex_get_cluster_id() == 0 & flex_get_core_id()==0)
             flex_timer_end();
     }
@@ -116,9 +163,7 @@ static inline void run_gemv_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
                 uint32_t src_scale = scale_buffers[buffer_idx];
                 if (flex_get_cluster_id() == 0 && flex_get_core_id()==0)
                     flex_timer_start();
-                // summa_vq_dequantize_tile(info, dst_w, buffer_idx, src_scale, next_deq_tile, deq_k_start, deq_k_rows);
-                // summa_vq_dequantize_tile_baseline(info, dst_w, buffer_idx, src_scale, next_deq_tile, deq_k_start, deq_k_rows);
-                summa_vq_dequantize_tile_arith(info, dst_w, buffer_idx, src_scale, next_deq_tile, deq_k_start, deq_k_rows);
+                SUMMA_GEMV_VQ_DEQ_CALL(info, dst_w, buffer_idx, src_scale, next_deq_tile, deq_k_start, deq_k_rows);
                 
                 if (flex_get_cluster_id() == 0 && flex_get_core_id()==0)
                     flex_timer_end();
@@ -135,18 +180,22 @@ static inline void run_gemv_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
         }
         flex_intra_cluster_sync();
 
-        // For collective store paths, align clusters; otherwise let DMA overlap freely
-        if (info->group_reduction == 1) {
-            grid_sync_group_barrier_xy(&(info->group));
-        }
-
-        // STAGE 3: STORE tile (tile-1) result (now safe - compute finished!)
-        if (flex_is_dm_core() && info->store_recorded == 1 && info->store_active == 1) {
-            if (info->group_reduction == 0) {
+        if (info->group_reduction == 0) {
+            // no-reduction: trigger next compute first, then store previous tile.
+            if (flex_is_first_core()) {
+                flex_redmule_config(info->M_tile, info->K_tile, info->N_tile);
+                flex_redmule_trigger(redmule_x, redmule_w, *REDMULE_L1_Z, REDMULE_COMPUTE_TYPE);
+            }
+            if (flex_is_dm_core() && info->store_recorded == 1 && info->store_active == 1) {
                 summa_reduce_and_store_Z(info, *DMA_L1_Z, true);
                 info->store_id       = info->summa_group_x;
                 info->store_recorded = 0;
-            } else {
+            }
+            flex_intra_cluster_sync();
+        } else {
+            // For collective/reduction path, align clusters then store previous tile and trigger next compute.
+            grid_sync_group_barrier_xy(&(info->group));
+            if (flex_is_dm_core() && info->store_recorded == 1 && info->store_active == 1) {
                 uint32_t start_id = (info->store_id < info->store_step) ? 0 : info->store_id - info->store_step;
                 uint32_t bid      = (start_id + info->store_id_offset) % info->summa_group_x;
                 uint32_t eid      = (info->store_id + info->store_id_offset) % info->summa_group_x;
@@ -159,17 +208,12 @@ static inline void run_gemv_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
 
                 info->store_id = start_id;
             }
+            if (flex_is_first_core()) {
+                flex_redmule_config(info->M_tile, info->K_tile, info->N_tile);
+                flex_redmule_trigger(redmule_x, redmule_w, *REDMULE_L1_Z, REDMULE_COMPUTE_TYPE);
+            }
+            flex_intra_cluster_sync();
         }
-
-        // ─────────────────────────────────────────────────────────────
-        // STAGE 4: TRIGGER REDMULE for tile (tile)
-        // ─────────────────────────────────────────────────────────────
-        if (flex_is_first_core()) {
-            flex_redmule_config(info->M_tile, info->K_tile, info->N_tile);
-            flex_redmule_trigger(redmule_x, redmule_w, *REDMULE_L1_Z, REDMULE_COMPUTE_TYPE);
-            // NO WAIT! Let next iteration's DMA/SPATZ overlap with this compute
-        }
-        flex_intra_cluster_sync();
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -242,6 +286,8 @@ static inline void run_gemv_pipelinevq_spatz(SummaGEMMInfo* info, int m, int n, 
 #endif
     }
     flex_intra_cluster_sync();
+    // Ensure tile-0 indices/scales broadcast is globally visible before tile-0 dequant.
+    grid_sync_group_barrier_xy(&(info->group));
 
     // ─────────────────────────────────────────────────────────────
     // PROLOGUE P1: DMA X[0] + idx/scale[1] || SPATZ dequantize W[0]
@@ -257,7 +303,7 @@ static inline void run_gemv_pipelinevq_spatz(SummaGEMMInfo* info, int m, int n, 
 #endif
         }
     } else if (is_deq_core && deq_k_rows > 0) {
-        summa_vq_dequantize_tile(info, w_buffers[0], 0, scale_buffers[0], 0, deq_k_start, deq_k_rows);
+        SUMMA_GEMV_SPATZ_VQ_DEQ_CALL(info, w_buffers[0], 0, scale_buffers[0], 0, deq_k_start, deq_k_rows);
     }
     flex_intra_cluster_sync();
 
@@ -293,7 +339,7 @@ static inline void run_gemv_pipelinevq_spatz(SummaGEMMInfo* info, int m, int n, 
                 uint32_t dst_w     = w_buffers[next_deq_tile & 0x1];
                 int buffer_idx     = next_deq_tile & 0x1;
                 uint32_t src_scale = scale_buffers[buffer_idx];
-                summa_vq_dequantize_tile(info, dst_w, buffer_idx, src_scale, next_deq_tile, deq_k_start, deq_k_rows);
+                SUMMA_GEMV_SPATZ_VQ_DEQ_CALL(info, dst_w, buffer_idx, src_scale, next_deq_tile, deq_k_start, deq_k_rows);
                 ++next_deq_tile;
             }
         } else if (is_compute_core) {
@@ -440,23 +486,158 @@ static inline void run_gemv_pipelinevq_fused(SummaGEMMInfo* info, int m, int n, 
                 }
             }
         }
-#if defined(KERNEL_VARIANT_FUSED) && (KERNEL_VARIANT_FUSED == 1)
+
         // Trigger compute for tile (k-1)
         if (info->spatz_attached && k_rows > 0) {
-        if (flex_get_cluster_id() == 0 & flex_get_core_id()==0)
+        if (flex_get_cluster_id() == 0)
         flex_timer_start();
             summa_vq_dequantize_tile_fused(info, partial_L1_Z, spatz_idx, spatz_scale, spatz_x, k - 1, k_start_row,
                                            k_rows);
                                                    if (flex_get_cluster_id() == 0 & flex_get_core_id()==0)
                                                    flex_timer_end();
+        if (flex_get_cluster_id() == 0)
+            flex_timer_end();
         }
-#else
-        const int SPATZ_CORE = 2;
-        if (core_id == SPATZ_CORE) {
-            summa_vq_dequantize_tile_fused(info, partial_L1_Z, spatz_idx, spatz_scale, spatz_x, k - 1, k_start_row,
-                                           k_rows);
-        }
+
+
+
+        flex_intra_cluster_sync();
+    }
+
+    // Reduce partial vectors from each Spatz core into the shared output buffer
+#if defined(KERNEL_VARIANT_FUSED) && (KERNEL_VARIANT_FUSED == 1)
+// flex_intra_cluster_sync();
+    if (info->spatz_num > 0 && info->spatz_attached && core_id == reduce_core) {
+        summa_vq_reduce_partials_fp16(info, *REDMULE_L1_Z);
+    }
+    flex_intra_cluster_sync();
 #endif
+
+    // Drain final tile and swap Z buffers for next iteration
+    if (info->group_reduction == 1) {
+        flex_global_barrier_xy();
+    } else {
+        grid_sync_group_barrier_xy(&(info->group));
+    }
+    info->store_recorded = 1; // flag: have data ready to store in next iteration
+    info->store_m        = m;
+    info->store_n        = n;
+    info->store_id       = info->summa_group_x;
+    uint32_t tmp_z       = *DMA_L1_Z;
+    *DMA_L1_Z            = *REDMULE_L1_Z;
+    *REDMULE_L1_Z        = tmp_z;
+
+    flex_intra_cluster_sync();
+}
+
+
+
+
+
+static inline void run_gemv_pipelinevq_spatz_sequential(SummaGEMMInfo* info, int m, int n, uint32_t* DMA_L1_Z,
+                                             uint32_t* REDMULE_L1_Z) {
+    const int tiles       = info->K_iter;
+    uint32_t x_buffers[2] = {info->L1_X1, info->L1_X2};
+    uint32_t w_buffers[2] = {info->L1_W1, info->L1_W2};
+    uint32_t core_id      = flex_get_core_id();
+    uint32_t k_start_row       = 0;
+    uint32_t k_rows            = info->K_tile;
+    uint32_t partial_L1_Z      = *REDMULE_L1_Z;
+#if defined(KERNEL_VARIANT_FUSED) && (KERNEL_VARIANT_FUSED == 1)
+    const uint32_t reduce_core = info->spatz_compute_core;
+    if (info->spatz_attached) {
+        partial_L1_Z = info->L1_Z_partial[info->spatz_sid];
+        summa_partition_k_rows(info->K_tile, info->spatz_sid, info->spatz_num, &k_start_row, &k_rows);
+    } else {
+        k_rows = 0;
+    }
+#endif
+#if VQ_USE_SCALES == 1
+    uint32_t scale_buffers[2] = {info->vq.L1_Scales[0], info->vq.L1_Scales[1]};
+#else
+    uint32_t scale_buffers[2] = {0u, 0u};
+#endif
+    // ─────────────────────────────────────────────────────────────
+    // PROLOGUE: DMA X[0], idx [0] scales[0]
+    // ─────────────────────────────────────────────────────────────
+    if (flex_is_dm_core()) {
+        if (info->cluster_for_rowwise == 1) {
+            summa_load_X_tile(info, x_buffers[0], m, n, 0);
+        }
+        if (info->cluster_for_colwise == 1) {
+            summa_vq_load_indices(info, 0, m, n, 0);
+#if VQ_USE_SCALES == 1
+            summa_vq_load_scales(info, scale_buffers[0], m, n, 0);
+#endif
+        }
+    }
+    flex_intra_cluster_sync();
+    // ─────────────────────────────────────────────────────────────
+    // PIPELINE: GEMM-style double buffering
+    // ─────────────────────────────────────────────────────────────
+    for (int k = 1; k <= tiles; ++k) {
+        uint32_t dma_x     = x_buffers[k & 0x1]; // buffer for next tile preload
+        uint32_t dma_idx   = k & 0x1;
+        uint32_t dma_scale = scale_buffers[k & 0x1];
+
+        uint32_t spatz_x     = x_buffers[(k - 1) & 0x1]; // tile k-1 is in buffer (k-1)
+        uint32_t spatz_w     = w_buffers[(k - 1) & 0x1];
+        uint32_t spatz_idx   = (k - 1) & 0x1;
+        uint32_t spatz_scale = scale_buffers[(k - 1) & 0x1];
+        // Fence previous compute before store/advance
+        grid_sync_group_barrier_xy(&(info->group));
+
+        // Prefetch next tile while we have the previous result ready to store
+        if (flex_is_dm_core()) {
+            if (k < tiles) {
+                if (info->cluster_for_rowwise == 1) {
+                    summa_load_X_tile(info, dma_x, m, n, k);
+                }
+                if (info->cluster_for_colwise == 1) {
+                    summa_vq_load_indices(info, dma_idx, m, n, k);
+#if VQ_USE_SCALES == 1
+                    summa_vq_load_scales(info, dma_scale, m, n, k);
+#endif
+                }
+            }
+            if (info->store_recorded == 1 && info->store_active == 1) {
+                if (info->group_reduction == 0) {
+                    // No inter-group reduction: store tile immediately and clear buffer
+                    summa_reduce_and_store_Z(info, *DMA_L1_Z, true);
+                    info->store_id       = info->summa_group_x;
+                    info->store_recorded = 0;
+                } else {
+                    uint32_t start_id = (info->store_id < info->store_step) ? 0 : info->store_id - info->store_step;
+                    uint32_t bid      = (start_id + info->store_id_offset) % info->summa_group_x;
+                    uint32_t eid      = (info->store_id + info->store_id_offset) % info->summa_group_x;
+                    if (((info->cluster_in_group_id_x >= bid && info->cluster_in_group_id_x < eid) && eid > bid) ||
+                        ((info->cluster_in_group_id_x >= bid || info->cluster_in_group_id_x < eid) && eid <= bid)) {
+                        summa_reduce_and_store_Z(info, *DMA_L1_Z, true);
+                    }
+                    info->store_id = start_id;
+                }
+            }
+        }
+
+        // Stage 2: compute with Spatz from dequantized W on the same core.
+        if (info->spatz_attached && k_rows > 0) {
+                    // Stage 1: dequantize tile (k-1) into W (no overlap with compute).
+        if (flex_get_cluster_id() == 0) flex_timer_start();
+                        SUMMA_GEMV_SPATZ_VQ_DEQ_CALL(info, spatz_w, spatz_idx, spatz_scale, k - 1, k_start_row, k_rows);
+        if (flex_get_cluster_id() == 0) flex_timer_end();
+        // flex_intra_cluster_sync();// only needed maybe for multicore
+        // Stage 2: compute with Spatz from dequantized W on the same core.
+        if (flex_get_cluster_id() == 0) flex_timer_start();
+
+            bool accumulate = (k > 1);
+            uint16_t* x_tile = (uint16_t*)(uintptr_t)spatz_x + k_start_row;
+            uint16_t* w_tile = (uint16_t*)(uintptr_t)spatz_w + (k_start_row * info->N_tile);
+            spatz_gemv_fp16_full_legacy(x_tile, w_tile, (uint16_t*)(uintptr_t)partial_L1_Z, info->M_tile, k_rows,
+                                        info->N_tile, accumulate);
+         if (flex_get_cluster_id() == 0) flex_timer_end();
+        }
+
+
         flex_intra_cluster_sync();
     }
 
@@ -488,6 +669,8 @@ static inline void run_gemv_pipelinevq_fused(SummaGEMMInfo* info, int m, int n, 
     flex_intra_cluster_sync();
 }
 
+
+
 static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32_t* DMA_L1_Z, uint32_t* REDMULE_L1_Z) {
     const int tiles  = info->K_iter;
     uint32_t core_id = flex_get_core_id();
@@ -497,10 +680,9 @@ static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
         summa_partition_k_rows(info->K_tile, info->spatz_sid, info->spatz_num, &deq_k_start, &deq_k_rows);
     }
 
-    if (tiles <= 0) {
-        flex_global_barrier_xy();
-        return;
-    }
+    // Keep all active clusters in a group aligned before first DMA/BCAST in this call.
+    // Without this, first call after init can start with skew and corrupt the first M tile.
+    // grid_sync_group_barrier_xy(&(info->group));
 
     uint32_t x_buffers[2] = {info->L1_X1, info->L1_X2};
     uint32_t w_buffers[2] = {info->L1_W1, info->L1_W2};
@@ -533,6 +715,8 @@ static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
 #endif
     }
     flex_intra_cluster_sync();
+    // Ensure tile-0 indices/scales broadcast is globally visible before tile-0 dequant.
+    grid_sync_group_barrier_xy(&(info->group));
 
     // ─────────────────────────────────────────────────────────────────
     // PROLOGUE P1: DMA X[0] + idx/scale[1] || SPATZ dequantize W[0]
@@ -550,8 +734,7 @@ static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
     } else if (deq_k_rows > 0) {
         if (flex_get_cluster_id() == 0)
             flex_timer_start();
-        summa_vq_dequantize_tile(info, w_buffers[0], 0, scale_buffers[0], 0, deq_k_start, deq_k_rows);
-        // summa_vq_dequantize_tile_baseline(info, w_buffers[0], 0, scale_buffers[0], 0, deq_k_start, deq_k_rows);
+        SUMMA_GEMM_VQ_DEQ_CALL(info, w_buffers[0], 0, scale_buffers[0], 0, deq_k_start, deq_k_rows);
 
         if (flex_get_cluster_id() == 0)
             flex_timer_end();
@@ -626,8 +809,8 @@ static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
                 uint32_t src_scale = scale_buffers[buffer_idx];
                 if (flex_get_cluster_id() == 0)
                     flex_timer_start();
-                summa_vq_dequantize_tile_arith(info, dst_w, buffer_idx, src_scale, next_deq_tile, deq_k_start, deq_k_rows);
-                // summa_vq_dequantize_tile_baseline(info, dst_w, buffer_idx, src_scale, next_deq_tile, deq_k_start, deq_k_rows);
+                SUMMA_GEMM_VQ_DEQ_CALL(info, dst_w, buffer_idx, src_scale, next_deq_tile, deq_k_start, deq_k_rows);
+
                 if (flex_get_cluster_id() == 0)
                     flex_timer_end();
                 ++next_deq_tile;
@@ -643,29 +826,44 @@ static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
         }
         flex_intra_cluster_sync();
 
-        // STAGE 3: STORE tile (tile-1) result (now safe - compute finished!)
-        if (flex_is_dm_core() && info->store_recorded == 1 && info->store_active == 1) {
-            uint32_t start_id = (info->store_id < info->store_step) ? 0 : info->store_id - info->store_step;
-            uint32_t bid      = (start_id + info->store_id_offset) % info->summa_group_x;
-            uint32_t eid      = (info->store_id + info->store_id_offset) % info->summa_group_x;
-
-            if (((info->cluster_in_group_id_x >= bid && info->cluster_in_group_id_x < eid) && eid > bid) ||
-                ((info->cluster_in_group_id_x >= bid || info->cluster_in_group_id_x < eid) && eid <= bid)) {
-                summa_reduce_and_store_Z(info, *DMA_L1_Z, true);
+        if (info->group_reduction == 0) {
+            // ─────────────────────────────────────────────────────────────
+            // STAGE 3/4 (no-reduction): trigger next compute first, then store previous tile.
+            // This allows HBM store to overlap with REDMULE compute on the other Z buffer.
+            // ─────────────────────────────────────────────────────────────
+            if (flex_is_first_core()) {
+                flex_redmule_config(info->M_tile, info->K_tile, info->N_tile);
+                flex_redmule_trigger(redmule_x, redmule_w, *REDMULE_L1_Z, REDMULE_COMPUTE_TYPE);
             }
 
-            info->store_id = start_id;
-        }
+            if (flex_is_dm_core() && info->store_recorded == 1 && info->store_active == 1) {
+                summa_reduce_and_store_Z(info, *DMA_L1_Z, true);
+                info->store_id       = info->summa_group_x;
+                info->store_recorded = 0;
+            }
+            flex_intra_cluster_sync();
+        } else {
+            // STAGE 3: STORE tile (tile-1) result (reduction mode)
+            if (flex_is_dm_core() && info->store_recorded == 1 && info->store_active == 1) {
+                uint32_t start_id = (info->store_id < info->store_step) ? 0 : info->store_id - info->store_step;
+                uint32_t bid      = (start_id + info->store_id_offset) % info->summa_group_x;
+                uint32_t eid      = (info->store_id + info->store_id_offset) % info->summa_group_x;
 
-        // ─────────────────────────────────────────────────────────────
-        // STAGE 4: TRIGGER REDMULE for tile (tile)
-        // ─────────────────────────────────────────────────────────────
-        if (flex_is_first_core()) {
-            flex_redmule_config(info->M_tile, info->K_tile, info->N_tile);
-            flex_redmule_trigger(redmule_x, redmule_w, *REDMULE_L1_Z, REDMULE_COMPUTE_TYPE);
-            // NO WAIT! Let next iteration's DMA/SPATZ overlap with this compute
+                if (((info->cluster_in_group_id_x >= bid && info->cluster_in_group_id_x < eid) && eid > bid) ||
+                    ((info->cluster_in_group_id_x >= bid || info->cluster_in_group_id_x < eid) && eid <= bid)) {
+                    summa_reduce_and_store_Z(info, *DMA_L1_Z, true);
+                }
+
+                info->store_id = start_id;
+            }
+
+            // STAGE 4: TRIGGER REDMULE for tile (tile)
+            if (flex_is_first_core()) {
+                flex_redmule_config(info->M_tile, info->K_tile, info->N_tile);
+                flex_redmule_trigger(redmule_x, redmule_w, *REDMULE_L1_Z, REDMULE_COMPUTE_TYPE);
+            }
+            flex_intra_cluster_sync();
         }
-        flex_intra_cluster_sync();
     }
 
     /*
@@ -693,6 +891,7 @@ static inline void run_gemm_pipelinevq(SummaGEMMInfo* info, int m, int n, uint32
         flex_redmule_wait(); // Wait for last tile's compute to finish
     }
     flex_intra_cluster_sync();
+
 }
 
 #endif

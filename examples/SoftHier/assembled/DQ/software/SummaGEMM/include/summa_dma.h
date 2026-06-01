@@ -89,6 +89,10 @@ static inline void summa_reduce_and_store_Z(SummaGEMMInfo* info, uint32_t DMA_L1
 }
 #if VQ_ENABLED == 1
 static inline void vq_load_cb(SummaGEMMInfo* info) {
+#if VQ_TILE_CODEBOOKS == 1
+    (void)info;
+    return;
+#else
 
     if (flex_is_dm_core()) {
         for (int i = 0; i < VQ_NUM_CBS; ++i) {
@@ -103,6 +107,37 @@ static inline void vq_load_cb(SummaGEMMInfo* info) {
             flex_dma_async_wait_all();
         }
     }
+#endif
+}
+
+static inline void summa_vq_load_codebooks(SummaGEMMInfo* info, int buffer_idx, int m, int n, int k) {
+    (void)m;
+#if VQ_TILE_CODEBOOKS == 1
+    const uint32_t total_n_tiles = info->N_size / info->N_tile;
+    const uint32_t tile_col_index = n * info->summa_group_x + info->cluster_in_group_id_x;
+    const uint32_t n_tile_abs = (info->group_n_offset / info->N_tile) + tile_col_index;
+    const uint32_t k_tile_abs = (uint32_t)k;
+    const uint64_t tile_linear = (uint64_t)k_tile_abs * total_n_tiles + n_tile_abs;
+
+    for (int cb = 0; cb < VQ_NUM_CBS; ++cb) {
+        const uint64_t src_offset = tile_linear * info->vq.L1_CB_size;
+        const uint32_t dst_offset = (buffer_idx == 0) ? info->vq.L1_CB1[cb] : info->vq.L1_CB2[cb];
+
+        flex_dma_async_1d(dst_offset, info->vq.VQ_CB_address[cb] + src_offset, info->vq.L1_CB_size);
+        flex_dma_async_wait_all();
+    }
+
+    for (int cb = 0; cb < VQ_NUM_CBS; ++cb) {
+        const uint32_t dst_offset = (buffer_idx == 0) ? info->vq.L1_CB1[cb] : info->vq.L1_CB2[cb];
+        flex_dma_async_broadcast(dst_offset, dst_offset, info->vq.L1_CB_size, (ARCH_NUM_CLUSTER_X - 1),
+                                 info->group.wakeup_col_mask);
+    }
+    flex_dma_async_wait_all();
+#else
+    (void)buffer_idx;
+    (void)n;
+    (void)k;
+#endif
 }
 
 static inline void summa_vq_load_scales(SummaGEMMInfo* info, uint32_t dst_L1_Scales, int m, int n, int k) {
@@ -126,6 +161,33 @@ static inline void summa_vq_load_scales(SummaGEMMInfo* info, uint32_t dst_L1_Sca
 static inline void summa_vq_load_indices(SummaGEMMInfo* info, int buffer_idx, int m, int n, int k) {
     (void)m;
     if (VQ_COMPRESS_K) {
+#if VQ_TILE_CODEBOOKS == 1
+        // GPTVQ tile-local K-compressed layout: (N, Kc)
+        uint32_t K_tile_comp    = info->vq.K_tile_compressed;
+        uint32_t K_comp         = info->vq.K_compressed;
+        uint32_t tile_col_index = n * info->summa_group_x + info->cluster_in_group_id_x;
+        uint32_t row_start      = info->group_n_offset + tile_col_index * info->N_tile;
+        uint32_t col_start_comp = (k * info->K_tile) / VQ_GROUP_SIZE;
+
+        for (int cb = 0; cb < VQ_NUM_CBS; ++cb) {
+            uint64_t src_offset = ((uint64_t)row_start * K_comp + col_start_comp) * VQ_IDX_BYTES;
+            uint32_t dst_offset = (buffer_idx == 0) ? info->vq.L1_IDX1[cb] : info->vq.L1_IDX2[cb];
+
+            flex_dma_async_2d(dst_offset, info->vq.VQ_Index_address[cb] + src_offset,
+                              K_tile_comp * VQ_IDX_BYTES,
+                              K_tile_comp * VQ_IDX_BYTES,
+                              K_comp * VQ_IDX_BYTES,
+                              info->N_tile);
+            flex_dma_async_wait_all();
+        }
+
+        for (int cb = 0; cb < VQ_NUM_CBS; ++cb) {
+            uint32_t dst_offset = (buffer_idx == 0) ? info->vq.L1_IDX1[cb] : info->vq.L1_IDX2[cb];
+            flex_dma_async_broadcast(dst_offset, dst_offset, info->vq.L1_IDX_size, (ARCH_NUM_CLUSTER_X - 1),
+                                     info->group.wakeup_col_mask);
+        }
+        flex_dma_async_wait_all();
+#else
         // Indices layout: (Kc, N) for now assume multicodebook too for vptq
         // for baseline with pretransposed indices : (N, Kc)
         uint32_t K_tile_comp    = info->vq.K_tile_compressed;
@@ -152,6 +214,7 @@ static inline void summa_vq_load_indices(SummaGEMMInfo* info, int buffer_idx, in
                                      info->group.wakeup_col_mask);
         }
         flex_dma_async_wait_all();
+#endif
     } else {
         // AQLM-style N-compressed
         uint32_t N_compressed      = info->vq.N_compressed;

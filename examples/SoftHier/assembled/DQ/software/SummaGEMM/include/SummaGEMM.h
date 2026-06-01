@@ -7,8 +7,16 @@
 #include "flex_redmule.h"
 #include "flex_runtime.h"
 #include "gemm_setup.h"
+
+// Global dequant-kernel selector used by GEMM/GEMV unless path-specific overrides are defined.
+// Options: summa_vq_dequantize_tile, summa_vq_dequantize_tile_baseline, summa_vq_dequantize_tile_arith
+#ifndef SUMMA_VQ_DEQ_KERNEL
+#define SUMMA_VQ_DEQ_KERNEL summa_vq_dequantize_tile_arith
+#endif
+
 #include "summa_aqlm_pipelines.h"
 #include "summa_dma.h"
+#include "summa_gptvq_pipelines.h"
 #include "summa_index.h"
 #include "summa_vptq_pipelines.h"
 #include "vq_kernels.h"
@@ -123,20 +131,25 @@ void SummaGEMMRun(SummaGEMMInfo* info) {
         uint32_t REDMULE_L1_Z = info->L1_Z1;
 
         initZBuffer(info);
+        // Ensure every active cluster reaches the same start point before first pipeline prologue.
+        grid_sync_group_barrier_xy(&(info->group));
 
         for (int m = 0; m < info->M_iter; ++m) {
             for (int n = 0; n < info->N_iter; ++n) {
 #if VQ_ENABLED == 1
+#if defined(VQ_ALGORITHM_GPTVQ) && (VQ_ALGORITHM_GPTVQ == 1)
+                run_gemm_pipelinegptvq(info, m, n, &DMA_L1_Z, &REDMULE_L1_Z);
+#else
                 run_gemm_pipelinevq(info, m, n, &DMA_L1_Z, &REDMULE_L1_Z);
                 // run_gemm_pipelinevptq_baseline(info, m, n, &DMA_L1_Z, &REDMULE_L1_Z);
-                
-                #else
+#endif
+#else
                 run_gemm_pipeline(info, m, n, &DMA_L1_Z, &REDMULE_L1_Z);
 #endif
             }
         }
-        // store
-        if (flex_is_dm_core() && info->store_active == 1) {
+        // Final tail flush for the last pending tile (for both reduction and no-reduction modes).
+        if (flex_is_dm_core() && info->store_active == 1 && info->store_recorded == 1) {
             summa_reduce_and_store_Z(info, DMA_L1_Z, false);
         }
         flex_global_barrier_xy();

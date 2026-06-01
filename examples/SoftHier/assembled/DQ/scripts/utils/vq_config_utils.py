@@ -32,8 +32,9 @@ def generate_vq_defines(gemm, header_prefix: str = "GEMM") -> List[str]:
     defines.append(f"#define {header_prefix}VQ_ENABLED 1")
 
     # Algorithm type
-    if hasattr(gemm, 'vq_algorithm'):
-        defines.append(f"#define {header_prefix}VQ_ALGORITHM_{gemm.vq_algorithm.upper()}")
+    algorithm_name = getattr(gemm, 'vq_algorithm_name', getattr(gemm, 'vq_algorithm', None))
+    if algorithm_name is not None:
+        defines.append(f"#define {header_prefix}VQ_ALGORITHM_{str(algorithm_name).upper()} 1")
     cb_bytes= 2 if gemm.vq_alg.codebook_format == "fp16" else 1
 
     compress_dim_k = getattr(gemm.vq_alg, 'compress_dim', 'n') == 'k'
@@ -56,6 +57,11 @@ def generate_vq_defines(gemm, header_prefix: str = "GEMM") -> List[str]:
     else:
         defines.append(f"#define {header_prefix}VQ_COMPRESS_K 0")
         defines.append(f"#define {header_prefix}VQ_COMPRESS_N 1")
+
+    if str(algorithm_name).lower() == 'gptvq':
+        defines.append(f"#define {header_prefix}VQ_TILE_CODEBOOKS 1")
+    else:
+        defines.append(f"#define {header_prefix}VQ_TILE_CODEBOOKS 0")
 
     # Derived parameters (compressed counts)
     def ceil_div(x, y):

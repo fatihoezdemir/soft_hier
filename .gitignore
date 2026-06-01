@@ -114,3 +114,6 @@ soft_hier_architecture_intro.md
 soft.md
 manim/**
 examples/SoftHier/assembled/DQ/software/Single_Cluster/include/dq_data_hbm.h
+examples/SoftHier/assembled/DQ/software/SummaGEMM/include/SummaGEMM.h
+*.png
+*.py

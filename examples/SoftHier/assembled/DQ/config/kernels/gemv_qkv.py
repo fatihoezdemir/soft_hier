@@ -45,18 +45,18 @@ class SummaGEMV(BaseKernel):
         self.dtype = kwargs.get('dtype', 'fp16')
         self.m_size = kwargs.get('M', kwargs.get('m_size', 1))  # GEMV has M=1
         # Default to 4K columns to fully occupy 4 groups × 4 clusters (128-col tiles)
-        self.n_size = kwargs.get('N', kwargs.get('n_size', 2048*2))
-        self.k_size = kwargs.get('K', kwargs.get('k_size', 2048*2))
+        self.n_size = kwargs.get('N', kwargs.get('n_size', 4096))
+        self.k_size = kwargs.get('K', kwargs.get('k_size', 512))
         self.compute_kernel_gemm = kwargs.get('compute_kernel_gemm', None)
         self.compute_kernel_gemv = kwargs.get('compute_kernel_gemv', 1)
 
         # Tile sizes (GEMV-specific defaults)
         self.m_tile = kwargs.get('m_tile', 1)   # M=1 for vector
-        self.n_tile = kwargs.get('n_tile', 128)
+        self.n_tile = kwargs.get('n_tile', 256)
         self.k_tile = kwargs.get('k_tile', 256)
 
         # SUMMA cluster configuration (GEMV-specific)
-        self.summa_scale_x = kwargs.get('summa_scale_x', 8)
+        self.summa_scale_x = kwargs.get('summa_scale_x', 4)
         self.summa_scale_y = kwargs.get('summa_scale_y', 1)  # Single row for GEMV
 
         # SUMMA group configuration (GEMV uses split-N)
@@ -105,7 +105,7 @@ class SummaGEMV(BaseKernel):
         #  'spatz_comp' DQ-based, with spatz as computing (only aqlm)
         #  'fused' - 'Fused dq and compute
         #  'splitk' - K-parallel (for future, multi-core)(default is splitn)
-        self.kernel_variant = kwargs.get('kernel_variant', 'dq' if self.vq_enabled else 'baseline')
+        self.kernel_variant = kwargs.get('kernel_variant', 'fused' if self.vq_enabled else 'baseline')
 
         # For baseline + VPTQ, default to enabling transpose to match HW access patterns
         if self.kernel_variant == 'baseline' and self.vq_algorithm_name in ('vptq', 'gptvq'):

@@ -19,6 +19,15 @@
 #include "gemm_data.h"
 #endif
 
+// Single dequant-kernel selector for GEMM + GEMV paths.
+// Change this one macro to switch both:
+//   summa_vq_dequantize_tile
+//   summa_vq_dequantize_tile_baseline
+//   summa_vq_dequantize_tile_arith
+#ifndef SUMMA_VQ_DEQ_KERNEL
+#define SUMMA_VQ_DEQ_KERNEL summa_vq_dequantize_tile_arith
+#endif
+
 #include "include/SummaGEMM.h"
 #include "include/SummaGEMV.h"
 
@@ -74,33 +83,45 @@ int main() {
         printf("  VQ BUFFERS (NUM_CBS=%d):\n", VQ_NUM_CBS);
         printf("------------------------------------------------------------\n");
         for (int i = 0; i < VQ_NUM_CBS; i++) {
+            uint32_t cb_hbm_hi = (uint32_t)(info.vq.VQ_CB_address[i] >> 32);
+            uint32_t cb_hbm_lo = (uint32_t)(info.vq.VQ_CB_address[i] & 0xffffffffu);
             printf("  Codebook[%d]:   L1: 0x%05lx   Size: %-5lu bytes\n", i, info.vq.L1_CB[i], info.vq.L1_CB_size);
-            printf("                 HBM: 0x%08lx\n", info.vq.VQ_CB_address[i]);
+            printf("                 HBM: 0x%08lx%08lx\n", (unsigned long)cb_hbm_hi, (unsigned long)cb_hbm_lo);
         }
         printf("------------------------------------------------------------\n");
         for (int i = 0; i < VQ_NUM_CBS; i++) {
+            uint32_t idx_hbm_hi = (uint32_t)(info.vq.VQ_Index_address[i] >> 32);
+            uint32_t idx_hbm_lo = (uint32_t)(info.vq.VQ_Index_address[i] & 0xffffffffu);
             printf("  Indices[%d] (double-buffered):\n", i);
             printf("    IDX1[%d]:     L1: 0x%05lx   Size: %-5lu bytes\n", i, info.vq.L1_IDX1[i], info.vq.L1_IDX_size);
             printf("    IDX2[%d]:     L1: 0x%05lx   Size: %-5lu bytes\n", i, info.vq.L1_IDX2[i], info.vq.L1_IDX_size);
-            printf("                 HBM: 0x%08lx\n", info.vq.VQ_Index_address[i]);
+            printf("                 HBM: 0x%08lx%08lx\n", (unsigned long)idx_hbm_hi, (unsigned long)idx_hbm_lo);
         }
         printf("------------------------------------------------------------\n");
 #if VQ_USE_SCALES == 1
         uint32_t L1_scales_size = info.K_tile * VQ_CB_BYTES;
+        uint32_t scale_hbm_hi = (uint32_t)(info.vq.VQ_Scale_address >> 32);
+        uint32_t scale_hbm_lo = (uint32_t)(info.vq.VQ_Scale_address & 0xffffffffu);
         printf("  Scales (double-buffered):\n");
         printf("    Scale[0]:    L1: 0x%05lx   Size: %-5lu bytes\n", info.vq.L1_Scales[0], L1_scales_size);
         printf("    Scale[1]:    L1: 0x%05lx   Size: %-5lu bytes\n", info.vq.L1_Scales[1], L1_scales_size);
-        printf("                 HBM: 0x%08lx\n", info.vq.VQ_Scale_address);
+        printf("                 HBM: 0x%08lx%08lx\n", (unsigned long)scale_hbm_hi, (unsigned long)scale_hbm_lo);
         printf("    Scale size:   %lu bytes\n", info.vq.scale_size);
         printf("------------------------------------------------------------\n");
 #endif
         printf("  VQ Configuration:\n");
-        printf("    CB size:      %lu bytes (%d centroids x %d bytes)\n", info.vq.cb_size, VQ_CB_NUM_CENTROIDS,
-               VQ_GROUP_SIZE * VQ_CB_BYTES);
-        printf("    IDX size:     %lu bytes (%d compressed x %d tile)\n", info.vq.idx_size, info.vq.N_tile_compressed,
-               info.K_tile);
+        printf("    CB size:      %lu bytes (%d centroids x %d values x %d bytes)\n", info.vq.L1_CB_size,
+               VQ_CB_NUM_CENTROIDS, VQ_GROUP_SIZE, VQ_CB_BYTES);
+#if VQ_COMPRESS_K == 1
+        printf("    IDX size:     %lu bytes (%lu x %lu tile)\n", info.vq.L1_IDX_size, info.N_tile,
+               info.vq.K_tile_compressed);
+#else
+        printf("    IDX size:     %lu bytes (%lu x %lu tile)\n", info.vq.L1_IDX_size, info.K_tile,
+               info.vq.N_tile_compressed);
+#endif
         printf("    Group size:   %d\n", VQ_GROUP_SIZE);
         printf("    N_compressed: %lu (N_tile: %lu)\n", info.vq.N_compressed, info.vq.N_tile_compressed);
+        printf("    K_compressed: %lu (K_tile: %lu)\n", info.vq.K_compressed, info.vq.K_tile_compressed);
         printf("------------------------------------------------------------\n");
 #endif
         printf("  Total L1 Area  : 0x%08lx (%lu bytes)\n", info.L1_AREA, info.L1_AREA);
@@ -114,7 +135,8 @@ int main() {
         printf("------------------------------------------------------------\n");
     }
 
-    if (flex_get_core_id() == 0 && flex_get_cluster_id() == 0)
+
+    if (flex_is_dm_core() && flex_get_cluster_id() == 0)
         flex_timer_start();
 #ifdef COMPUTE_KERNEL_GEMM
     SummaGEMMRun(&info);
@@ -122,10 +144,12 @@ int main() {
 #if defined(COMPUTE_KERNEL_GEMV)
     SummaGEMVRun(&info);
 #endif
-    if (flex_get_core_id() == 0 && flex_get_cluster_id() == 0)
+    if (flex_is_dm_core() &&flex_get_cluster_id() == 0)
         flex_timer_end();
     flex_global_barrier_xy();
-
+    // if (flex_get_cluster_id() == 0 && flex_is_dm_core()) {
+    //     printf(" \n\n FINISHED,now dumping\n\n");
+    // }
     // dump results
     if (GEMM_SUMMA_NUMER) {
         // postload part of O
@@ -154,12 +178,3 @@ int main() {
     flex_eoc(eoc_val);
     return 0;
 }
-
-// ------------------------------------------------------------
-//   X1:  0x00000   Size: 256   bytes
-//   W1:  0x00100   Size: 16384 bytes
-//   Z1:  0x04100   Size: 128   bytes
-// ------------------------------------------------------------
-//   X2:  0x04180   Size: 256   bytes
-//   W2:  0x04280   Size: 16384 bytes
-//   Z2:  0x08280   Size: 128   bytes

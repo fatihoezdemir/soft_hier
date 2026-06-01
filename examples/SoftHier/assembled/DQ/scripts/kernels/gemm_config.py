@@ -91,11 +91,11 @@ else:
 if hasattr(gemm, 'vq_enabled') and gemm.vq_enabled:
     vq_errors = vq_utils.validate_vq_config(gemm)
     if vq_errors:
-        print("VQ Configuration Errors:")
+        print("[CFG]VQ Configuration Errors:")
         for err in vq_errors:
             print(f"  - {err}")
         raise ValueError("Invalid VQ configuration")
-    print("VQ configuration validated successfully")
+    print("[CFG]VQ configuration validated successfully")
 
 # Dealing with Input/Output matrix reshaping
 appendix = []
@@ -149,7 +149,7 @@ if gemm.resha_z_to_enable:
 if hasattr(gemm, 'vq_enabled') and gemm.vq_enabled:
     vq_defines = vq_utils.generate_vq_defines(gemm, header_prefix="")
     appendix.extend(vq_defines)
-    print(f"Added {len(vq_defines)} VQ configuration defines")
+    print(f"[CFG]Added {len(vq_defines)} VQ configuration defines")
 
 # Add kernel variant selection
 if hasattr(gemm, 'kernel_variant'):

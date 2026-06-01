@@ -155,13 +155,13 @@ static inline void summa_vq_dequantize_tile_arith(const SummaGEMMInfo* info, uin
     asm volatile("vsetvli %0, %1, e16, m8, ta, ma" : "=r"(vl_elems) : "r"(avl_elems));
     uint32_t groups_this_iter    = vl_elems / VQ_GROUP_SIZE;
     const uint32_t payload_elems = groups_this_iter * VQ_GROUP_SIZE;
+    const uint32_t row_stride_elems = row_length * VQ_GROUP_SIZE;
+    const uint8_t* idx_cb0_row      = idx_cb0_base + k_start_row * row_length;
+    const uint8_t* idx_cb1_row      = idx_cb1_base + k_start_row * row_length;
+    uint16_t* W_out_row             = W_out;
+    const uint16_t* scale_ptr       = scales;
     for (uint32_t r = 0; r < k_rows; ++r) {
-        // Get row-specific pointers
-        const uint8_t* idx_cb0_row = idx_cb0_base + (k_start_row + r) * row_length;
-        const uint8_t* idx_cb1_row = idx_cb1_base + (k_start_row + r) * row_length;
-        uint16_t* W_out_row        = W_out + r * info->vq.N_tile_compressed * VQ_GROUP_SIZE;
-        // Load scale for this row (1 scale per K-dimension row)
-        const uint16_t* scale_ptr = &scales[r];
+        // Keep t0/t1 setup in-row to guarantee correct rs1 registers for VLBLK under compiler register allocation.
         asm volatile(
             "flh fa0, (%9)\n"                       // load scale of row
             "vsetvli   zero, %4, e8,  m1, ta, ma\n" // set vl to to load  8-bit indices
@@ -187,6 +187,10 @@ static inline void summa_vq_dequantize_tile_arith(const SummaGEMMInfo* info, uin
               "r"(W_out_row),                               // %8
               "r"(scale_ptr)                                //%9
             : "t0", "t1", "v0", "v1", "v8", "v16", "v24", "fa0", "memory");
+        idx_cb0_row += row_length;
+        idx_cb1_row += row_length;
+        W_out_row += row_stride_elems;
+        ++scale_ptr;
     }
 }
 static inline void summa_vq_dequantize_tile(const SummaGEMMInfo* info, uint32_t dst_L1_W, int buffer_idx,
@@ -281,27 +285,41 @@ static inline void summa_vq_dequantize_tile_baseline(const SummaGEMMInfo* info, 
     // Fixed VL for a single centroid group.
     asm volatile("vsetvli zero, %0, e16, m1, ta, ma" ::"r"(group_elems));
 
+    const uint32_t row_stride_elems = row_length * VQ_GROUP_SIZE;
+    const uint8_t* idx_cb0_row      = idx_cb0_base + k_start_row * row_length;
+    const uint8_t* idx_cb1_row      = idx_cb1_base + k_start_row * row_length;
+    uint16_t* W_out_row             = W_out;
+    const uint16_t* scale_ptr       = scales;
+
     for (uint32_t r = 0; r < k_rows; ++r) {
-        const uint8_t* idx_cb0_row = idx_cb0_base + (k_start_row + r) * row_length;
-        const uint8_t* idx_cb1_row = idx_cb1_base + (k_start_row + r) * row_length;
-        uint16_t* W_out_row        = W_out + r * info->vq.N_tile_compressed * VQ_GROUP_SIZE;
-        const uint16_t* scale_ptr  = &scales[r];
+        const uint8_t* idx0 = idx_cb0_row;
+        const uint8_t* idx1 = idx_cb1_row;
+        uint16_t* out_ptr   = W_out_row;
+
+        // Row scale is constant across all groups in this row.
+        asm volatile("flh fa0, (%0)" ::"r"(scale_ptr) : "fa0", "memory");
 
         for (uint32_t g = 0; g < row_length; ++g) {
-            const uint16_t* a = cb0_base + (unsigned)idx_cb0_row[g] * VQ_GROUP_SIZE;
-            const uint16_t* b = cb1_base + (unsigned)idx_cb1_row[g] * VQ_GROUP_SIZE;
-            uint16_t* out_ptr = W_out_row + (uint32_t)g * VQ_GROUP_SIZE;
+            const uint16_t* a = cb0_base + (unsigned)(*idx0) * VQ_GROUP_SIZE;
+            const uint16_t* b = cb1_base + (unsigned)(*idx1) * VQ_GROUP_SIZE;
 
-            asm volatile("flh      fa0, (%[s])\n"
-                         "vle16.v  v0, (%[a])\n"
+            asm volatile("vle16.v  v0, (%[a])\n"
                          "vle16.v  v1, (%[b])\n"
                          "vfadd.vv v2, v0, v1\n"
                          "vfmul.vf v2, v2, fa0\n"
                          "vse16.v  v2, (%[o])\n"
                          :
-                         : [a] "r"(a), [b] "r"(b), [s] "r"(scale_ptr), [o] "r"(out_ptr)
-                         : "v0", "v1", "v2", "fa0", "memory");
+                         : [a] "r"(a), [b] "r"(b), [o] "r"(out_ptr)
+                         : "v0", "v1", "v2", "memory");
+            ++idx0;
+            ++idx1;
+            out_ptr += VQ_GROUP_SIZE;
         }
+
+        idx_cb0_row += row_length;
+        idx_cb1_row += row_length;
+        W_out_row += row_stride_elems;
+        ++scale_ptr;
     }
 }
 
@@ -330,66 +348,104 @@ static inline void summa_vq_dequantize_tile_fused(const SummaGEMMInfo* info, uin
     const uint32_t row_length    = info->vq.N_tile_compressed; // groups per K row
     const uint32_t payload_elems = row_length * VQ_GROUP_SIZE; // total elements per row
 
-    for (uint32_t k = 0; k < k_rows; ++k) {
-        const uint32_t k_global    = k_start_row + k;
-        const uint8_t* idx_cb0_row = idx_cb0_base + k_global * row_length;
-        const uint8_t* idx_cb1_row = idx_cb1_base + k_global * row_length;
-        const uint16_t* scale_ptr  = &scales[k];
-        const uint16_t* a_ptr      = &x_ptr[k]; // x is a vector (length K_tile)
+    uint32_t vl_elems  = 0;
+    asm volatile("vsetvli %0, %1, e16, m8, ta, ma" : "=r"(vl_elems) : "r"(payload_elems));
+    const uint32_t groups_this_iter = vl_elems / VQ_GROUP_SIZE;
+    const uint32_t payload_vl       = groups_this_iter * VQ_GROUP_SIZE;
+    if (k_tile == 0) {
+        // Path A: first K tile starts from zeroed accumulator.
+        asm volatile("vmv.v.i v24, 0" ::: "v24");
 
-        // Determine whether to keep previous output (previous K or previous tile) or start fresh
-        const bool use_acc = (k_tile > 0) || (k > 0);
+        const uint8_t* idx_cb0_row = idx_cb0_base + k_start_row * row_length;
+        const uint8_t* idx_cb1_row = idx_cb1_base + k_start_row * row_length;
+        const uint16_t* scale_ptr  = scales;
+        const uint16_t* a_ptr      = x_ptr; // x is a vector (length K_tile)
 
-        // Set VL for the full row payload
-        uint32_t vl_elems = 0;
-        asm volatile("vsetvli %0, %1, e16, m8, ta, ma" : "=r"(vl_elems) : "r"(payload_elems));
-        uint32_t groups_this_iter = vl_elems / VQ_GROUP_SIZE;
-
-        // Initialize accumulator
-        if (use_acc) {
-            asm volatile("vsetvli zero, %0, e16, m8, ta, ma\n"
-                         "vle16.v v24, (%1)\n"
+        for (uint32_t k = 0; k < k_rows; ++k) {
+            asm volatile("flh       fa0, (%6)\n"                 // scale[k]
+                         "flh       fa1, (%7)\n"                 // x[k]
+                         "fmul.h    fa0, fa0, fa1\n"             // a_scaled = scale * x (half precision)
+                         "vsetvli   zero, %2, e8,  m1, ta, ma\n" // set vl for idx load (groups)
+                         "vle8.v    v0, (%0)\n"                  // idx cb0
+                         "vle8.v    v1, (%1)\n"                  // idx cb1
+                         "vsetvli   zero, %3, e16, m8, ta, ma\n" // set vl for payload elems
+                         "mv        t0, %4\n"
+                         ".word     %5\n" // load cb0 centroids -> v8
+                         "mv        t1, %8\n"
+                         ".word     %9\n" // load cb1 centroids -> v16
+                         "vfmacc.vf v24, fa0, v8\n"
+                         "vfmacc.vf v24, fa0, v16\n"
                          :
-                         : "r"(payload_elems), "r"(C_base)
-                         : "v24", "memory");
-        } else {
-            asm volatile("vmv.v.i v24, 0" ::: "v24");
+                         : "r"(idx_cb0_row),                            // %0
+                           "r"(idx_cb1_row),                            // %1
+                           "r"(groups_this_iter),                       // %2
+                           "r"(payload_vl),                             // %3
+                           "r"(cb0_base),                               // %4
+                           "i"(VLBLK1EI8_V(RVV_V8, RVV_V0, RVX_T0, 1)), // %5
+                           "r"(scale_ptr),                              // %6
+                           "r"(a_ptr),                                  // %7
+                           "r"(cb1_base),                               // %8
+                           "i"(VLBLK1EI8_V(RVV_V16, RVV_V1, RVX_T1, 1)) // %9
+                         : "t0", "t1", "v0", "v1", "v8", "v16", "v24", "fa0", "fa1", "memory");
+
+            idx_cb0_row += row_length;
+            idx_cb1_row += row_length;
+            ++scale_ptr;
+            ++a_ptr;
         }
-
-        // Dequantize and accumulate
-        asm volatile("flh       fa0, (%6)\n"                 // scale[k]
-                     "flh       fa1, (%7)\n"                 // x[k]
-                     "fmul.h    fa0, fa0, fa1\n"             // a_scaled = scale * x (half precision)
-                     "vsetvli   zero, %2, e8,  m1, ta, ma\n" // set vl for idx load (groups)
-                     "vle8.v    v0, (%0)\n"                  // idx cb0
-                     "vle8.v    v1, (%1)\n"                  // idx cb1
-                     "vsetvli   zero, %3, e16, m8, ta, ma\n" // set vl for payload elems
-                     "mv        t0, %4\n"
-                     ".word     %5\n" // load cb0 centroids -> v8
-                     "mv        t1, %8\n"
-                     ".word     %9\n" // load cb1 centroids -> v16
-                     "vfmacc.vf v24, fa0, v8\n"
-                     "vfmacc.vf v24, fa0, v16\n"
-                     :
-                     : "r"(idx_cb0_row),                            // %0
-                       "r"(idx_cb1_row),                            // %1
-                       "r"(groups_this_iter),                       // %2
-                       "r"(payload_elems),                          // %3
-                       "r"(cb0_base),                               // %4
-                       "i"(VLBLK1EI8_V(RVV_V8, RVV_V0, RVX_T0, 1)), // %5
-                       "r"(scale_ptr),                              // %6
-                       "r"(a_ptr),                                  // %7
-                       "r"(cb1_base),                               // %8
-                       "i"(VLBLK1EI8_V(RVV_V16, RVV_V1, RVX_T1, 1)) // %9
-                     : "t0", "t1", "v0", "v1", "v8", "v16", "v24", "fa0", "fa1", "memory");
-
-        // Store once per row after full accumulation
+    } else {
+        // Path B: subsequent K tiles start from existing accumulator.
         asm volatile("vsetvli zero, %0, e16, m8, ta, ma\n"
-                     "vse16.v v24, (%1)\n"
+                     "vle16.v v24, (%1)\n"
                      :
-                     : "r"(payload_elems), "r"(C_base)
-                     : "memory");
+                     : "r"(payload_vl), "r"(C_base)
+                     : "v24", "memory");
+
+        const uint8_t* idx_cb0_row = idx_cb0_base + k_start_row * row_length;
+        const uint8_t* idx_cb1_row = idx_cb1_base + k_start_row * row_length;
+        const uint16_t* scale_ptr  = scales;
+        const uint16_t* a_ptr      = x_ptr; // x is a vector (length K_tile)
+
+        for (uint32_t k = 0; k < k_rows; ++k) {
+            asm volatile("flh       fa0, (%6)\n"                 // scale[k]
+                         "flh       fa1, (%7)\n"                 // x[k]
+                         "fmul.h    fa0, fa0, fa1\n"             // a_scaled = scale * x (half precision)
+                         "vsetvli   zero, %2, e8,  m1, ta, ma\n" // set vl for idx load (groups)
+                         "vle8.v    v0, (%0)\n"                  // idx cb0
+                         "vle8.v    v1, (%1)\n"                  // idx cb1
+                         "vsetvli   zero, %3, e16, m8, ta, ma\n" // set vl for payload elems
+                         "mv        t0, %4\n"
+                         ".word     %5\n" // load cb0 centroids -> v8
+                         "mv        t1, %8\n"
+                         ".word     %9\n" // load cb1 centroids -> v16
+                         "vfmacc.vf v24, fa0, v8\n"
+                         "vfmacc.vf v24, fa0, v16\n"
+                         :
+                         : "r"(idx_cb0_row),                            // %0
+                           "r"(idx_cb1_row),                            // %1
+                           "r"(groups_this_iter),                       // %2
+                           "r"(payload_vl),                             // %3
+                           "r"(cb0_base),                               // %4
+                           "i"(VLBLK1EI8_V(RVV_V8, RVV_V0, RVX_T0, 1)), // %5
+                           "r"(scale_ptr),                              // %6
+                           "r"(a_ptr),                                  // %7
+                           "r"(cb1_base),                               // %8
+                           "i"(VLBLK1EI8_V(RVV_V16, RVV_V1, RVX_T1, 1)) // %9
+                         : "t0", "t1", "v0", "v1", "v8", "v16", "v24", "fa0", "fa1", "memory");
+
+            idx_cb0_row += row_length;
+            idx_cb1_row += row_length;
+            ++scale_ptr;
+            ++a_ptr;
+        }
     }
+
+    // Store once after all k_rows are accumulated.
+    asm volatile("vsetvli zero, %0, e16, m8, ta, ma\n"
+                 "vse16.v v24, (%1)\n"
+                 :
+                 : "r"(payload_vl), "r"(C_base)
+                 : "memory");
 }
 
 static inline void summa_vq_dequantize_tile_overhead(const SummaGEMMInfo* info, uint32_t dst_L1_W, int buffer_idx,

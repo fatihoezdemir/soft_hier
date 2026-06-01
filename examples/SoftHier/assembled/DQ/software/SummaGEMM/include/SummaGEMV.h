@@ -8,6 +8,13 @@
 #include "flex_runtime.h"
 #include "gemm_setup.h"
 #include "spatz_compute.h"
+
+// Global dequant-kernel selector used by GEMM/GEMV unless path-specific overrides are defined.
+// Options: summa_vq_dequantize_tile, summa_vq_dequantize_tile_baseline, summa_vq_dequantize_tile_arith
+#ifndef SUMMA_VQ_DEQ_KERNEL
+#define SUMMA_VQ_DEQ_KERNEL summa_vq_dequantize_tile
+#endif
+
 #include "summa_aqlm_pipelines.h"
 #include "summa_dma.h"
 #include "summa_index.h"
@@ -113,7 +120,7 @@ static inline void run_gemv_pipeline(SummaGEMMInfo* info, int m, int n, uint32_t
 
 void SummaGEMVRun(SummaGEMMInfo* info) {
     flex_global_barrier_xy();
-
+      if (flex_get_cluster_id() == 0 &&flex_is_dm_core())  flex_timer_start();
     // Load VQ codebooks - all cores must call this for proper synchronization
 #if VQ_ENABLED == 1
     if (info->cluster_for_colwise == 1) {
@@ -129,10 +136,11 @@ void SummaGEMVRun(SummaGEMMInfo* info) {
 
         for (int n = 0; n < info->N_iter; ++n) {
 #if VQ_ENABLED == 1
-
-            // run_gemv_pipelinevq_fused(info, 0 /*m*/, n, &DMA_L1_Z, &REDMULE_L1_Z);
+// 
+            run_gemv_pipelinevq_fused(info, 0 /*m*/, n, &DMA_L1_Z, &REDMULE_L1_Z);
             // run_gemv_pipelinevq_spatz(info, 0 /*m*/, n, &DMA_L1_Z, &REDMULE_L1_Z);
-            run_gemv_pipelinevq(info, 0 /*m*/, n, &DMA_L1_Z, &REDMULE_L1_Z);
+            // run_gemv_pipelinevq(info, 0 /*m*/, n, &DMA_L1_Z, &REDMULE_L1_Z);
+            // run_gemv_pipelinevq_spatz_sequential(info, 0 /*m*/, n, &DMA_L1_Z, &REDMULE_L1_Z);
             // run_gemv_pipelinevptq_baseline(info, 0 /*m*/, n, &DMA_L1_Z, &REDMULE_L1_Z);
 
 #else
@@ -143,6 +151,8 @@ void SummaGEMVRun(SummaGEMMInfo* info) {
         if (flex_is_dm_core() && info->store_active == 1) {
             summa_reduce_and_store_Z(info, DMA_L1_Z, false);
         }
+        if (flex_get_cluster_id() == 0 &&flex_is_dm_core()) flex_timer_end();
+
         flex_global_barrier_xy();
     }
 }

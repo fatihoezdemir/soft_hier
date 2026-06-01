@@ -1,0 +1,355 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+\newcommand{\blind}{} \blind
+
+\input{packages}
+\begin{document}
+
+\title{VLXBLK: Accelerating Codebook-based Vector-Quantized LLM Inference on Vector Processors \\
+
+\input{acknowledgement}
+}
+\input{authors}
+\input{acronym}
+\maketitle
+
+\begin{abstract}
+Codebook-based \gls{VQ} has emerged as an effective approach for alleviating the growing memory-capacity and bandwidth bottlenecks of \gls{LLM} inference by replacing groups of weights with compact indices into shared centroid codebooks. During inference, these indices drive codebook lookups that reconstruct weight blocks on the fly before feeding them into downstream operations. However, existing \gls{RVV} architectures support indexed memory accesses only at element granularity, leaving block-level index handling and codebook address generation on the software critical path and thereby underutilizing the vector datapath.
+
+To address this limitation, we propose blocked vector index load (\emph{VLXBLK}), an ISA extension that elevates blocked indexed access to a native vector-memory operation. Unlike conventional RVV indexed loads, where each index fetches one SEW-wide element, \emph{VLXBLK} uses an additional scalar operand to specify the block size, allowing each index to fetch a contiguous block of SEW elements into vector registers.
+
+We implement \emph{VLXBLK} in an open-source vector processing cluster and synthesize it in a 12,nm FinFET technology. Across vector-quantized GEMM and GEMV kernels, \emph{VLXBLK} improves performance by xx\% over an optimized RVV baseline with only x\% area overhead for a cluster of vector processing elements tightly coupled to shared L1 memory. We build a performance-accurate instruction-level model of the VLXBLK extension, calibrated against RTL implementation, and leverage it for scale-out performance analysis on a large $4\times4$ multi-cluster system.
+\textcolor{red}{Here we need to present end-to-end benchmark results. e.g., Using }
+
+% \yawli{Convention about defining abbreviations: 1) All abbreviations should be defined before usage unless it's very common 2) Definition in the abstract and main paper should be done independently. This means that even if an abbreviation is defined in the abstract, it still needs to be redefined in the main paper.}
+
+\end{abstract}
+
+
+\begin{IEEEkeywords}
+RVV, computer architecture, vector quantization, LLM Inference
+\end{IEEEkeywords}
+
+
+\section{Introduction}
+
+Large language models (LLMs) have revolutionized AI, but their substantial computational and memory requirements pose severe deployment challenges. LLM inference is fundamentally memory-bound~\cite{ivanovDataMovementAll2021} because model weights must be repeatedly streamed through the memory hierarchy to feed high-throughput compute units. Weight quantization addresses this bottleneck by reducing model precision, thereby lowering both memory footprint and bandwidth demand~\cite{gongSurveyLowbitLarge2025}. Scalar quantization methods~\cite{zhaoBenchmarkingPostTrainingQuantization,linAWQActivationawareWeight2025} are particularly hardware-friendly because low-bit weights can be densely packed, efficiently unpacked, and directly consumed by arithmetic units. However, as compression is pushed toward sub-4-bit regimes, scalar quantization degrades sharply because each weight is approximated independently with limited precision levels.
+
+Codebook-based vector quantization (VQ) overcomes this quality floor by grouping weights into subvectors and representing each group by an index into a learned codebook of centroid vectors~\cite{egiazarianExtremeCompressionLarge2024,liuVPTQExtremeLowbit2024,tsengQuIPEvenBetter2024,xuRSAVQRiemannianSensitivityAware2025,xuCRVQChannelRelaxedVectora}. 
+By exploiting intra-group correlations, VQ preserves model quality at 2--3 bits per weight, where scalar methods fail (Fig.~\ref{fig:pplvsbpw}). 
+However, this compression efficiency introduces a new hardware challenge: during inference, indices must be translated into codebook addresses to fetch centroid blocks before reconstruction into weight vectors for GEMM/GEMV execution.
+Prior work has addressed this overhead through specialized software caches on GPUs~\cite{liuVQLLMHighperformanceCode2025} or dedicated lookup tables on FPGAs. 
+By contrast, programmable vector processors---already pervasive in modern AI accelerators alongside matrix engines, DMA units, and software-managed memories---lack native ISA support for VQ's unique memory access pattern. 
+
+
+
+
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.5\textwidth]{fig/perplexity_plot.pdf}
+  \caption{Perplexity vs effective bits per weight on Llama-2 7B~\cite{shaoOMNIQUANTOMNIDIRECTIONALLYCALIBRATED2024}, evaluated on WikiText2. VQ quantizers remain close to the baseline reference at aggressive bit levels while scalar quantization algorithms degrade sharply.}
+  \label{fig:pplvsbpw}
+\end{figure}
+
+The key observation of this work is that explicit-codebook VQ reconstruction exhibits a \emph{blocked indexed} memory access pattern: while the index stream is irregular, each index selects one contiguous centroid block of $d$ elements (typically $d \in \{8,16\}$). However, existing RISC-V Vector (RVV) ISA primitives fail to capture this pattern efficiently. Unit-stride loads can fetch elements within one centroid but require software-managed centroid base address computation for every index. Conventional indexed loads remove the regularity requirement but still fetch only one SEW-wide element per index~\cite{perottiAra2ExploringSingle2024}. As a result, existing RVV implementations must decompose VQ reconstruction into explicit centroid address generation (scalar core) and unit-stride loads (vector unit), placing index decoding, pointer arithmetic, and short-block orchestration on the software critical path. This \emph{address-generation wall} leaves vector memory and arithmetic resources severely underutilized during the reconstruction phase.
+
+To eliminate this address-generation wall, we propose \textbf{VLXBLK}, a blocked indexed vector-load ISA extension. VLXBLK consumes indices directly from the vector register file and takes the centroid block size as an explicit operand. For each active index, the vector load/store unit (VLSU) computes the corresponding centroid base address and fetches the contiguous block in one operation. This removes per-centroid address generation from the hot loop and restores balance between memory, address computation, and arithmetic. This paper makes the following contributions:
+
+\begin{itemize}
+    \item We identify the address-generation wall in explicit-codebook VQ dequantization on scalar-controlled vector processors, where centroid address computation dominates the reconstruction loop.
+
+    \item We propose VLXBLK, an RVV-compatible blocked indexed vector-load instruction that offloads centroid address generation to the vector load/store unit, enabling direct fetch of contiguous centroid blocks from vector-resident index streams.
+
+    \item We implement VLXBLK in the Spatz open-source vector processor and synthesize it in 12\,nm FinFET technology, showing only 2.2\% area overhead while retaining maximum operating frequency.
+
+    \item We integrate VLXBLK into VQ reconstruction, VQ-GEMM, and VQ-GEMV kernels, achieving up to 2.3$\times$ speedup over an optimized baseline.
+
+    \item We evaluate VLXBLK on the SoftHier multi-cluster system for LLM prefill and decode workloads, demonstrating improved overlap between DMA, dequantization, and matrix computation.
+
+\end{itemize}
+
+
+
+
+
+
+
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=0.8\textwidth]{fig/arch_ss.pdf}
+  \caption{SoftHier Hierarchy:2D-Mesh NoC Clusters, Cluster-Vieww and Vector Processor View}
+  \label{fig:softhiertemplate}
+\end{figure*}
+\section{Background}
+In order to motivate the blocked vector index load, this section introduces the three pieces needed to
+understand the address-generation bottleneck: the runtime reconstruction dataflow of codebook-based vector quantization, the Spatz--SoftHier target
+architecture, and the RISC-V vector memory operations relevant to this work.
+\subsection{Codebook-Based VQ for LLM Inference}
+
+\begin{figure}[h]
+  \includegraphics[width=0.5\textwidth]{fig/quantprocess-pipeline.drawio.pdf}
+  \caption{Vector Quantization and its respective reconstruction process}
+  \label{fig:quantprocess}
+\end{figure}
+
+Codebook-based vector quantization compresses groups of weights by replacing
+each group with an index into one or more learned centroid codebooks. In
+contrast to scalar quantization, which reconstructs each weight independently,
+VQ reconstructs a short vector of weights from each index. This allows VQ
+methods to operate at lower effective bits per weight while preserving model
+quality in aggressive compression regimes.
+
+Let \(W \in \mathbb{R}^{N \times K}\) denote the weight matrix of a linear
+layer. For clarity, we first describe the single-codebook case; extending the
+formulation to multiple codebooks, as used for example in product or additive
+quantization, is straightforward. We assume that each row of \(W\) is
+partitioned into contiguous groups of \(d\) weights, where \(d\) is small
+(e.g., \(d \in \{8,16\}\)). A \(B\)-bit index selects one of \(2^B\) centroid
+vectors from a codebook
+\[
+    C \in \mathbb{R}^{2^B \times d}.
+\]
+The compressed representation therefore consists of an index matrix
+\[
+    I \in \{0,\ldots,2^B-1\}^{N \times (K/d)}
+\]
+and the shared codebook \(C\). During inference, group \(j\) of row \(i\) is
+reconstructed as
+\[
+    \hat{g}_{i,j} = C[I_{i,j}] \in \mathbb{R}^{d}.
+\]
+The reconstructed row \(\hat{W}_{i,:}\) is obtained by concatenating these
+groups along the column dimension.
+
+Fig.~\ref{fig:vq_reconstruction} illustrates the runtime reconstruction path.
+The quantization algorithm is applied offline and produces the index matrix and
+codebook. At inference time, the hardware repeatedly fetches an index, computes
+the corresponding centroid address, loads the \(d\)-element centroid block, and
+consumes the reconstructed values in GEMM or GEMV. Since the codebook \(C\) is
+small, it can be staged entirely in the local L1 memory, while the index
+stream accounts for most of the compressed weight traffic from off-core memory.
+A full materialization of \(\hat{W}\) is not required; optimized kernels can
+instead fuse reconstruction with the matrix operation.
+
+This runtime dataflow exposes the access pattern targeted by VLXBLK. The index
+stream follows the layout of the compressed weight matrix and is typically
+regular, allowing dense unit-stride vector loads. The codebook access, however,
+is data-dependent: consecutive indices may select unrelated centroid entries.
+Within each selected centroid, the accessed values are contiguous. Thus,
+explicit-codebook VQ induces a \emph{blocked indexed} memory access pattern:
+one index selects one short contiguous block. VLXBLK is designed to expose this
+pattern directly to the vector load/store unit.
+
+
+\subsection{Target Architecture: Spatz and SoftHier}
+\bowwang{TODO}
+% since they werealreyady introduced ,add justbrief mentionon sptz and softhier , and especially the vrf structure
+
+
+\subsection{RVV Memory Access Operations}
+
+
+RVV provides a vector-length-agnostic execution model in which the active
+vector length \(vl\), element width \(SEW\), and register grouping factor
+\(LMUL\) are configured at runtime. In this work, \(SEW\) and \(LMUL\) are
+relevant because they determine the element granularity and register-group
+structure of vector memory operations.
+
+RVV supports unit-stride, strided, indexed, and segmented memory accesses.
+Unit-stride loads and stores access contiguous memory locations and are well
+suited for streaming dense arrays. Strided accesses use a constant byte stride
+between elements. Indexed loads use offsets held in a vector register to perform
+element-wise gather/scatter accesses from a scalar base address. Segment loads
+and stores move multiple adjacent fields per logical memory element into
+separate vector registers; indexed segment loads combine this segment structure
+with indexed addressing. These operations provide the baseline memory-access
+primitives against which VLXBLK is compared.
+
+
+
+
+\section{Motivation: The Address-Generation Wall}
+
+\begin{figure*}[ht!]
+    \vspace{-2em}
+  \centering
+  \includegraphics[width=0.9\linewidth]{fig/quantprocess-hotloop.drawio.pdf}
+  \vspace{-2em}
+  \caption{Hot Loop a vs b}
+  \label{fig:vq_hotloop}
+    \vspace{-1em}
+\end{figure*}
+To understand the limitations of existing RVV memory primitives for
+codebook-based VQ inference, we implement an optimized software-managed
+reconstruction baseline. As shown in Fig.~\ref{fig:vq_hotloop}, the baseline
+performs three stages for each centroid group: it loads compressed indices and
+computes centroid addresses on the scalar core, uses standard unit-stride
+vector loads to fetch the selected centroid blocks, and then applies the
+dequantization arithmetic. Although each centroid block is contiguous, the
+chosen block is index-dependent, so centroid address generation remains on the
+software critical path.
+
+\subsection{Blocked Indexed Access in VQ Dequantization}
+
+The utilized algorithm for both kernels is Gustavson-based outer product algorithm, efficiently bypassing the reduction step at the slight cost of larger memory allocation (wording).
+
+  \subsection{Why Existing RVV Loads Are Insufficient}
+
+These operations do not directly match explicit-codebook VQ reconstruction.
+The index stream is regular and can be loaded with unit-stride vector loads.
+The codebook access is different: each index selects one centroid, and each
+centroid is a short contiguous block of \(d\) values, typically \(d \in
+\{8,16\}\). Conventional indexed loads provide one address per loaded element,
+whereas VQ requires one index to select a \(d\)-element block. Indexed segment
+loads are closer, since they can load multiple fields per indexed address, but
+they distribute the fields across separate destination registers and are
+constrained by the segment/register-group structure. They therefore express an
+indexed AoS-to-SoA transformation rather than a flexible centroid-block fetch.
+For VQ reconstruction, the selected centroid block is consumed as one contiguous
+vector operand, so scattering the fields across destination registers introduces
+unnecessary register layout conversion.
+
+As a result, a baseline RVV implementation must decompose VQ reconstruction
+into explicit centroid-address generation and conventional vector loads. On a
+scalar-controlled vector processor such as Snitch--Spatz, this places index
+decoding, pointer arithmetic, and short-block load orchestration on the scalar
+side, leading to the address-generation bottleneck described next.
+
+
+
+
+%1 show that the cpu in gneral is stalling the vector unit,heavy fpu unerutilizaton
+
+% illustrate tension of codebook and indces and the respecitive metaopreatoin that is lacking
+% say that indexed segementload elelemtn width does not support longer centroids 
+%2 also say that indexed segment load are also not solving bevcause itsi a aos-> soa  conversion and is also fixed to 8 elemetns and complicates programmability(while also sayingthat its ideals for vptq->vertivcally quantizing algorithms)
+%  neither gives us flexible solution
+
+\section{VLXBLK: Blocked Vector Index Loading}
+% here isthe instrucitoand how it is wired semanticvally and implementation-wise
+
+\subsection{Instruction Semantics}
+% very small table showing rd, vs1, vd and their encoding location
+
+
+
+\begin{table}[t]
+\centering
+\caption{Proposed RVV block indexed-load instruction encoding.}
+\label{tab:vlxblk_encoding}
+\scriptsize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}ll@{}}
+\hline
+\textbf{Format} & \textbf{Encoding (32-bit)} \\
+\hline
+\textbf{VLXBLK} \texttt{vd, vs, rs1} &
+\texttt{\{blklen\}\{vs\}\{rs1\}\{idxw\}\{vd\}opcode} \\
+\hline
+\end{tabular}
+\end{table}
+The instruction \texttt{vlxblk<blklen>ei<idxwidth>.v vd, (rs1), vs2}
+loads one contiguous \texttt{blklen}-element centroid block for each active
+index in \texttt{vs2}.
+
+
+
+
+
+\subsection{RTL Implementation}
+
+% zoom a bit into the vlsu and show thatitsids in the addrgen (logic}
+%  add ppa numbers and also mention chaining support
+% may be analyze bank conflicts?
+%  what did i build and how didi bult
+
+\section{VLXBLK-Enabled Compute Kernels}
+  \subsection{Vector Dequantization Kernel}
+  
+%  softwarepart  show hot loop and a fused dataflow
+  \subsection{Fused VQ-GEMM and VQ-GEMV}
+  %briefly mention gustavcson and show the fused kernel here: it avoids intermediaate load store as well ads materializaotn of weight matrix
+
+\subsection{SoftHier Multicluster Layer Dataflow}
+\begin{table}[h]
+\centering
+\caption{System Specifications}
+\label{tab:system_specifications}
+\begin{tabular}{ll}
+\hline
+\textbf{Component} & \textbf{Specification} \\
+\hline
+System & 8$\times$8 tiles, 1024-bit NoC link width \\
+HBM & 32$\times$2 channels, equally divided over west and south edges \\
+Matrix Engine & 64$\times$16 CE array, 1.93 TFLOPS @ FP8 \\
+Local Memory & 384 KB, 512 GB/s \\
+Peak Performance & x TFLOPS \\
+Peak HBM Bandwidth & 2 TB/s \\
+\hline
+\end{tabular}
+\end{table}
+% explain double bufffering and data dependenc ybetween dma dq and compute
+
+% this is for applicaotn scenarios so we wantto show runtiemb reakdown as wellas dma/redmul/dq overlap(2figures)
+
+
+
+
+
+
+
+
+
+
+% add loop figure with vlxblk and als ocycle comparison and IC Breakdown
+
+
+
+
+\begin{figure}[h]
+  \centering
+  \fbox{%
+    \begin{minipage}[c][0.22\textheight][c]{0.92\linewidth}
+      \centering
+      \textbf{roofline}\\[0.5em]
+    \end{minipage}
+  }
+  \caption{}
+  \label{fig:roofline}
+\end{figure}
+
+\section{Evaluation}
+% punchline:climbed the roofline verticvally, it scales ,nice applicaiton scenario
+\subsection{RTL PPA}
+\subsection{Implementation Setup and Area Analysis}
+\bowwang{TODO}
+% gf12 ,gvsoc, rtl
+% relevant matrix shapes  and also baesline 
+\subsection{Spatz-Cluster Kernel Results}
+% show roofline plotand elaborate on fpu utiliztaon for vq-gemm vq-gemv
+
+
+\subsection{SoftHier System-Level Scaling}
+
+
+% here show trasnforemrlayer for prefill and decode
+% verybrief, only areaand  clock freuqency 
+
+\section{Related Work}
+
+% Prior work has addressed dequantization overhead through optimized GPU kernels\cite{parkCodeGEMMCodebookCentricApproach2025},
+% software fusion, CPU/SIMD implementations\cite{gerogiannisDECANearCoreLLM2025}, and specialized FPGA or lookup-based
+% accelerators\cite{moLUTTENSORCORE}. 
+
+
+\section{Conclusion}
+We introduce vlxblk
+\section*{References}
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+
+
+\end{document}

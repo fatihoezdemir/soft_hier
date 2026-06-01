@@ -11,3 +11,6 @@
 	path = examples/SoftHier/assembled/DQ/third_party/VPTQ
 	url = https://github.com/microsoft/VPTQ.git
 	branch = algorithm
+[submodule "examples/SoftHier/assembled/DQ/third_party/GPTVQ"]
+	path = examples/SoftHier/assembled/DQ/third_party/GPTVQ
+	url = https://github.com/Qualcomm-AI-research/gptvq.git

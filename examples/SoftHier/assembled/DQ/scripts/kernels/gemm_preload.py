@@ -71,7 +71,7 @@ def gen_vq_preload_data(gemm):
         num_codebooks=gemm.vq_alg.get_num_codebooks(),
         nbits_per_codebook=gemm.vq_alg.nbits_per_cb,
         in_group_size=gemm.vq_alg.group_size,
-        compress_dim=getattr(gemm, 'vq_compress_dim', 'n'),
+        compress_dim=getattr(gemm, 'vq_compress_dim', getattr(gemm.vq_alg, 'compress_dim', 'n')),
     )
 
     # Initialize VQ handler
@@ -94,11 +94,11 @@ def gen_vq_preload_data(gemm):
     # VPTQ: 1x{vlen_normal}, e.g., 1x6 for 4096 centroids
     if vq_algorithm == 'aqlm':
         config_str = f"{vq_config.num_codebooks}x{vq_config.in_group_size}"
-    elif vq_algorithm == 'vptq':
-        # For VPTQ, use single codebook with vector length
+    elif vq_algorithm in ('vptq', 'gptvq'):
+        # Single-codebook K-compressed layout uses 1x{group_size}
         config_str = f"1x{vq_config.in_group_size}"
     else:
-        raise ValueError(f"Unsupported vq_algorithm: {vq_algorithm}. Use 'aqlm' or 'vptq'.")
+        raise ValueError(f"Unsupported vq_algorithm: {vq_algorithm}. Use 'aqlm', 'vptq', or 'gptvq'.")
 
     dim_str = f"_dim{vq_config.k_size}x{vq_config.n_size}"
 
@@ -106,13 +106,17 @@ def gen_vq_preload_data(gemm):
     indices_path = os.path.join(cache_dir, f"{source_prefix}{config_str}{dim_str}_idx.npy")
     scales_path = os.path.join(cache_dir, f"{source_prefix}{config_str}{dim_str}_scales.npy")
     w_hat_path = os.path.join(cache_dir, f"{source_prefix}{config_str}{dim_str}_W_hat.npy")
+    meta_path = os.path.join(cache_dir, f"{source_prefix}{config_str}{dim_str}_meta.npz")
 
     print(f"VQ algorithm: {vq_algorithm}")
     print(f"VQ source: {source_name} (vq_source='{vq_source}')")
     print(f"Checking for VQ cache at: {indices_path}")
     if os.path.exists(codebooks_path) and os.path.exists(indices_path):
         print(f"Loading VQ data from cache: {cache_dir}")
-        vq_handler.load_from_files(codebooks_path, indices_path, scales_path, w_hat_path)
+        load_kwargs = {}
+        if vq_algorithm == 'gptvq' and os.path.exists(meta_path):
+            load_kwargs['meta_path'] = meta_path
+        vq_handler.load_from_files(codebooks_path, indices_path, scales_path, w_hat_path, **load_kwargs)
     else:
         print("WARNING: VQ cache not found. Generating test VQ data with random quantization.")
         print(f"Expected files at: {cache_dir}")
@@ -143,6 +147,16 @@ def gen_vq_preload_data(gemm):
 
     # Prepare data for preload
     vq_data = vq_handler.prepare_for_preload(dtype=gemm.dtype, enable_transpose=enable_transpose)
+
+    if getattr(gemm, 'vq_algorithm_name', '') == 'gptvq' and vq_handler.W_reconstructed is not None:
+        w_hat = vq_handler.W_reconstructed.astype(np.float16, copy=False)
+        tile_rows = gemm.k_tile
+        tile_cols = gemm.n_tile
+        tile_w = w_hat[:tile_rows, :tile_cols].copy()
+        tile_w_t = tile_w.T.copy()
+
+        vq_data['debug_tile_w'] = tile_w.view(np.uint16)
+        vq_data['debug_tile_w_t'] = tile_w_t.view(np.uint16)
 
     return vq_data, vq_handler.W_reconstructed
 
@@ -331,6 +345,8 @@ if __name__ == '__main__':
     # Calculate VQ data addresses if enabled
     VQ_codebooks_addrs = []
     VQ_indices_addrs = []
+    VQ_debug_tile_w_addr = None
+    VQ_debug_tile_w_t_addr = None
     if vq_data is not None:
         # Place VQ data after Z_golden
         current_addr = Z_gaddr + Z_golden.nbytes
@@ -350,6 +366,15 @@ if __name__ == '__main__':
 
         VQ_scales_addr = current_addr
         print(f"VQ_scales_addr = {VQ_scales_addr: #x}")
+        current_addr += vq_data['scales'].nbytes
+
+        if 'debug_tile_w_t' in vq_data and 'debug_tile_w' in vq_data:
+            VQ_debug_tile_w_t_addr = current_addr
+            print(f"VQ_debug_tile_w_t_addr = {VQ_debug_tile_w_t_addr: #x}")
+            current_addr += vq_data['debug_tile_w_t'].nbytes
+
+            VQ_debug_tile_w_addr = current_addr
+            print(f"VQ_debug_tile_w_addr = {VQ_debug_tile_w_addr: #x}")
 
     print(f"X_addr = {X_addr: #x}")
     print(f"Z_eaddr = {Z_eaddr: #x}")
@@ -376,6 +401,12 @@ if __name__ == '__main__':
             # Add scales
             data_arrays.append(vq_data['scales'])
             data_addrs.append(VQ_scales_addr)
+
+            if VQ_debug_tile_w_t_addr is not None and VQ_debug_tile_w_addr is not None:
+                data_arrays.append(vq_data['debug_tile_w_t'])
+                data_addrs.append(VQ_debug_tile_w_t_addr)
+                data_arrays.append(vq_data['debug_tile_w'])
+                data_addrs.append(VQ_debug_tile_w_addr)
 
             pld.make_preload_elf(args.elf_path, data_arrays, data_addrs)
             print(f"Generated preload ELF with VQ data ({len(vq_data['codebooks_split'])} codebooks, {len(vq_data['indices_split'])} indices arrays)")
@@ -423,6 +454,9 @@ if __name__ == '__main__':
             file.write(f'#define VQ_INDICES_ADDRS {{{indices_addrs_str}}}\n')
 
             file.write(f'\n#define VQ_SCALES_ADDR ((uint64_t){VQ_scales_addr: #x})\n')
+            if VQ_debug_tile_w_t_addr is not None and VQ_debug_tile_w_addr is not None:
+                file.write(f'#define VQ_DEBUG_GPTVQ_TILE_W_T_ADDR ((uint64_t){VQ_debug_tile_w_t_addr: #x})\n')
+                file.write(f'#define VQ_DEBUG_GPTVQ_TILE_W_ADDR ((uint64_t){VQ_debug_tile_w_addr: #x})\n')
 
         file.write('\n#endif // _GEMM_ADDRESSES_H_\n')
 

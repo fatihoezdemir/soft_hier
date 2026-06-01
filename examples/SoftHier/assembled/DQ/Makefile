@@ -227,8 +227,8 @@ VQ_CACHE_DIR ?= ${CUR_DIR}/vq_cache
 REPO_ID ?= ISTA-DASLab/Llama-2-7b-AQLM-2Bit-2x8-hf
 WEIGHT_FILE ?= model.safetensors
 LAYER_PREFIX ?= model.layers.0.mlp.down_proj
-VQ_K ?= 512
-VQ_N ?= 512
+VQ_K ?= 1024
+VQ_N ?= 1024
 vq-download:
 	@echo "Downloading and extracting VQ model from HuggingFace..."
 	@mkdir -p ${VQ_CACHE_DIR}
@@ -241,14 +241,22 @@ vq-download:
 		--n_size ${VQ_N}
 
 # Generate VQ data using specified quantization algorithm
-# Supported algorithms: aqlm, vptq
-VQ_ALGORITHM ?= aqlm
+# Supported algorithms: aqlm, vptq, gptvq
+VQ_ALGORITHM ?= gptvq
 VQ_NUM_CB ?= 2
 VQ_NBITS_PER_CB ?= 8
 VQ_GROUP_SIZE ?= 8
 
 VPTQ_GROUP_SIZE ?= 8
 VPTQ_NUM_CENTROIDS ?= 4096
+
+GPTVQ_GROUP_SIZE ?= 4
+GPTVQ_NUM_CENTROIDS ?= 256
+GPTVQ_LAYOUT ?= paper
+GPTVQ_COLUMNS_PER_GROUP ?= 256
+GPTVQ_WEIGHTS_PER_GROUP ?= 65536
+GPTVQ_CODEBOOK_BITWIDTH ?= 8
+GPTVQ_MAX_REL_ERROR ?= 0.25
 
 VQ_MAX_EPOCHS ?= 20
 VQ_DEVICE ?= auto
@@ -278,9 +286,25 @@ else ifeq ($(VQ_ALGORITHM),vptq)
 		--max_epochs ${VQ_MAX_EPOCHS} \
 		--device ${VQ_DEVICE} \
 		--output_dir ${VQ_CACHE_DIR}
+else ifeq ($(VQ_ALGORITHM),gptvq)
+	@echo "Using GPTVQ quantizer..."
+	python3 ${CUR_DIR}/scripts/quantizers/gptvq_quantizer.py \
+		--k_size ${VQ_K} \
+		--n_size ${VQ_N} \
+		--num_codebooks 1 \
+		--group_size ${GPTVQ_GROUP_SIZE} \
+		--num_centroids ${GPTVQ_NUM_CENTROIDS} \
+		--layout ${GPTVQ_LAYOUT} \
+		--columns_per_group ${GPTVQ_COLUMNS_PER_GROUP} \
+		--weights_per_group ${GPTVQ_WEIGHTS_PER_GROUP} \
+		--codebook_bitwidth ${GPTVQ_CODEBOOK_BITWIDTH} \
+		--max_rel_error ${GPTVQ_MAX_REL_ERROR} \
+		--max_epochs ${VQ_MAX_EPOCHS} \
+		--device ${VQ_DEVICE} \
+		--output_dir ${VQ_CACHE_DIR}
 else
 	@echo "ERROR: Unknown algorithm '$(VQ_ALGORITHM)'"
-	@echo "Supported algorithms: aqlm, vptq"
+	@echo "Supported algorithms: aqlm, vptq, gptvq"
 	@exit 1
 endif
 
@@ -298,6 +322,16 @@ vq-status:
 vq-clean:
 	@echo "Cleaning VQ cache..."
 	rm -rf ${VQ_CACHE_DIR}
+
+gptvq-dq-check:
+	@echo "Checking GPTVQ Python dequantization..."
+	python3 ${CUR_DIR}/scripts/quantizers/gptvq_dq.py \
+		--codebooks ${VQ_CACHE_DIR}/gptvq_gen1x${GPTVQ_GROUP_SIZE}_dim${VQ_K}x${VQ_N}_cb.npy \
+		--indices ${VQ_CACHE_DIR}/gptvq_gen1x${GPTVQ_GROUP_SIZE}_dim${VQ_K}x${VQ_N}_idx.npy \
+		--meta ${VQ_CACHE_DIR}/gptvq_gen1x${GPTVQ_GROUP_SIZE}_dim${VQ_K}x${VQ_N}_meta.npz \
+		--w_hat ${VQ_CACHE_DIR}/gptvq_gen1x${GPTVQ_GROUP_SIZE}_dim${VQ_K}x${VQ_N}_W_hat.npy \
+		--w_orig ${VQ_CACHE_DIR}/gptvq_gen1x${GPTVQ_GROUP_SIZE}_dim${VQ_K}x${VQ_N}_W_orig.npy \
+		--max_rel_error ${GPTVQ_MAX_REL_ERROR}
 
 # GEMM with VQ - Full workflow
 gemm-vq-pre: vq-status gemm-clean gemm-cfg gemm-pld gemm-hs
@@ -320,16 +354,19 @@ vq-help:
 	@echo ""
 	@echo "  vq-generate      Generate and quantize random weights"
 	@echo "                   Variables:"
-	@echo "                     VQ_ALGORITHM     - Algorithm to use (aqlm, vptq) [default: aqlm]"
+	@echo "                     VQ_ALGORITHM     - Algorithm to use (aqlm, vptq, gptvq) [default: aqlm]"
 	@echo "                     VQ_K, VQ_N       - Matrix dimensions"
 	@echo "                     VQ_NUM_CB        - Number of codebooks (AQLM)"
 	@echo "                     VQ_NBITS_PER_CB  - Bits per codebook (AQLM)"
 	@echo "                     VQ_GROUP_SIZE    - Group size"
-	@echo "                     VQ_NUM_CENTROIDS - Number of centroids (VPTQ)"
+	@echo "                     VPTQ_NUM_CENTROIDS - Number of centroids (VPTQ)"
+	@echo "                     GPTVQ_GROUP_SIZE - Group size / vector length (GPTVQ, default: 4)"
+	@echo "                     GPTVQ_NUM_CENTROIDS - Number of centroids (GPTVQ, default: 256)"
 	@echo "                     VQ_MAX_EPOCHS    - Training epochs"
 	@echo "                     VQ_DEVICE        - Device (auto, cpu, cuda)"
 	@echo "                   AQLM saves to: aqlm_gen{config}_dim{K}x{N}_*.npy"
 	@echo "                   VPTQ saves to: vptq_gen{config}_dim{K}x{N}_*.npy"
+	@echo "                   GPTVQ saves to: gptvq_gen{config}_dim{K}x{N}_*.npy"
 	@echo ""
 	@echo "  vq-status        Show VQ cache status"
 	@echo "  vq-clean         Clean VQ cache directory"
@@ -349,11 +386,16 @@ vq-help:
 	@echo "     make gemm-vq-run"
 	@echo ""
 	@echo "  2. Generate VQ data using VPTQ and run:"
-	@echo "     make vq-generate VQ_ALGORITHM=vptq VQ_GROUP_SIZE=6 VQ_NUM_CENTROIDS=4096"
+	@echo "     make vq-generate VQ_ALGORITHM=vptq VPTQ_GROUP_SIZE=6 VPTQ_NUM_CENTROIDS=4096"
 	@echo "     # Set vq_source='gen' and vq_force_weight_load=1 in gemm.py"
 	@echo "     make gemm-vq-run"
 	@echo ""
-	@echo "  3. Download pretrained model and run:"
+	@echo "  3. Generate VQ data using GPTVQ and run:"
+	@echo "     make vq-generate VQ_ALGORITHM=gptvq GPTVQ_GROUP_SIZE=4 GPTVQ_NUM_CENTROIDS=256"
+	@echo "     # Set vq_source='gen' and vq_force_weight_load=1 in gemm.py"
+	@echo "     make gemm-vq-run"
+	@echo ""
+	@echo "  4. Download pretrained model and run:"
 	@echo "     make vq-download REPO_ID=... LAYER_PREFIX=..."
 	@echo "     # Set vq_source='dl' and vq_force_weight_load=1 in gemm.py"
 	@echo "     make gemm-vq-run"
@@ -366,6 +408,7 @@ vq-help:
 	@echo "Quantization Algorithms:"
 	@echo "  aqlm  - Additive Quantization (no special dependencies)"
 	@echo "  vptq  - Vector Product Quantization (requires vptq-algo conda environment)"
+	@echo "  gptvq - Hessian-aware vector quantization (vendored third_party/GPTVQ)"
 
 # ============================================================================
 # VQ Debugging Targets
@@ -449,4 +492,3 @@ tidy:
 		-I$(abspath ../../../../soft_hier/flex_cluster_sdk/runtime/include) \
 		-I$(abspath software/include) \
 		-D__riscv -D__riscv_xlen=32
-

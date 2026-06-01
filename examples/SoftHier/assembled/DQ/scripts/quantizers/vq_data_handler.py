@@ -7,16 +7,21 @@ from dataclasses import dataclass
 import torch
 
 try:
+    from .gptvq_utils import dequantize_grouped_gptvq
+except ImportError:
+    from gptvq_utils import dequantize_grouped_gptvq
+
+try:
     import aqlm as aqlm  # TODO: fix this import
-    print("AQLM pip found[OK].")
+
     from aqlm import utils as aqlm_utils
-    print("AQLM UTILS found[OK].")
+
     from aqlm import QuantizedWeight
     print("AQLM QuantizedWeight found[OK].")
     AQLM_AVAILABLE = True
 except ImportError:
     AQLM_AVAILABLE = False
-    print("AQLM library not found; dequantization will be unavailable.")
+    print("[CFG]AQLM library not found; dequantization will be unavailable.")
 
 try:
     from safetensors import safe_open
@@ -88,6 +93,8 @@ class VQDataHandler:
         self.indices: Optional[np.ndarray] = None
         self.scales: Optional[np.ndarray] = None
         self.W_reconstructed: Optional[np.ndarray] = None
+        self.meta: Dict[str, Any] = {}
+        self.data_format: Optional[str] = None
 
     def download_and_extract_layer(self,
                                    slice_k: Tuple[int, int] = None,
@@ -150,11 +157,117 @@ class VQDataHandler:
         print(f"  Indices: {self.indices.shape}, dtype: {self.indices.dtype}")
         print(f"  Scales: {self.scales.shape}")
 
+    def _load_meta_file(self, meta_path: Optional[str]) -> Dict[str, Any]:
+        if meta_path is None or not os.path.exists(meta_path):
+            return {}
+
+        meta_npz = np.load(meta_path)
+        meta: Dict[str, Any] = {}
+        for key in meta_npz.files:
+            value = meta_npz[key]
+            if np.isscalar(value) or value.shape == ():
+                meta[key] = value.item()
+            else:
+                meta[key] = value
+        return meta
+
+    def _normalize_gptvq_indices(self, idx: np.ndarray, meta: Dict[str, Any]) -> np.ndarray:
+        groups_per_column = int(meta['groups_per_column'])
+        rows_per_group = int(meta['rows_per_group'])
+        chunks_per_block = int(meta['chunks_per_block'])
+
+        if idx.shape[1:] == (groups_per_column, rows_per_group, chunks_per_block):
+            return idx
+
+        if idx.shape[1:] == (chunks_per_block, groups_per_column, rows_per_group):
+            print("Detected legacy GPTVQ grouped index order; converting to (block, group, row, chunk)")
+            return np.transpose(idx, (0, 2, 3, 1))
+
+        raise ValueError(
+            f"Unexpected GPTVQ indices shape {idx.shape}; "
+            f"expected (*, {groups_per_column}, {rows_per_group}, {chunks_per_block})"
+        )
+
+    def _dequantize_gptvq_grouped(self) -> np.ndarray:
+        if self.codebooks is None or self.indices is None:
+            raise RuntimeError("need to load data first")
+        if not self.meta:
+            raise RuntimeError("GPTVQ grouped dequantization requires meta data")
+
+        self.W_reconstructed = dequantize_grouped_gptvq(
+            self.codebooks,
+            self.indices,
+            k_size=self.cfg.k_size,
+            n_size=self.cfg.n_size,
+            vq_dim=int(self.meta['vq_dim']),
+            rows_per_group=int(self.meta['rows_per_group']),
+            columns_per_group=int(self.meta['columns_per_group']),
+        )
+        return self.W_reconstructed
+
+    def _prepare_gptvq_preload(self, dtype: str = 'fp16') -> Dict[str, np.ndarray]:
+        if self.codebooks is None or self.indices is None:
+            raise RuntimeError("need to load data first")
+        if not self.meta:
+            raise RuntimeError("GPTVQ preload preparation requires meta data")
+
+        codebooks = self.codebooks
+        indices = self.indices
+
+        num_blocks, groups_per_column, num_centroids, vq_dim = codebooks.shape
+        rows_per_group = int(self.meta['rows_per_group'])
+        chunks_per_block = int(self.meta['chunks_per_block'])
+
+        if self.cfg.n_size != groups_per_column * rows_per_group:
+            raise ValueError(
+                f"GPTVQ preload expected N={groups_per_column * rows_per_group}, got {self.cfg.n_size}"
+            )
+        if self.cfg.k_size != num_blocks * chunks_per_block * vq_dim:
+            raise ValueError(
+                f"GPTVQ preload expected K={num_blocks * chunks_per_block * vq_dim}, got {self.cfg.k_size}"
+            )
+
+        # Flatten one tile-local codebook after another in row-major tile order:
+        # [cb(k_block=0,n_group=0), cb(0,1), ..., cb(1,0), ...]
+        codebooks_tiled = codebooks.reshape(num_blocks * groups_per_column, num_centroids, vq_dim)
+
+        # Flatten grouped indices to the logical W^T index matrix:
+        # rows = N, cols = K / vq_dim.
+        indices_matrix = np.transpose(indices, (1, 2, 0, 3)).reshape(
+            self.cfg.n_size,
+            self.cfg.k_size // vq_dim,
+        )
+
+        if dtype != 'fp16':
+            raise ValueError(f"unsupported dtype: {dtype}")
+
+        codebooks_typed = codebooks_tiled.astype(np.float16).view(np.uint16)
+        W_typed = self.W_reconstructed.astype(np.float16).view(np.uint16)
+        scales_typed = self.scales.astype(np.float16).view(np.uint16) if self.scales.size > 0 else np.array([], dtype=np.uint16)
+        indices_typed = indices_matrix.astype(np.uint8)
+
+        print("Prepared GPTVQ preload layout:")
+        print(f"  Tile-local codebooks: {codebooks.shape} -> {codebooks_tiled.shape}")
+        print(f"  Flattened indices:    {indices.shape} -> {indices_matrix.shape} (N x Kc)")
+
+        return {
+            'codebooks': codebooks_typed.reshape(-1),
+            'codebooks_split': [codebooks_typed.reshape(-1)],
+            'indices_packed': indices_typed,
+            'indices_cb0': indices_typed,
+            'indices_cb1': np.array([], dtype=np.uint8),
+            'indices_flattened': indices_typed.reshape(-1),
+            'indices_split': [indices_typed],
+            'scales': scales_typed,
+            'W_reconstructed': W_typed,
+        }
+
     def load_from_files(self,
                        codebooks_path: str,
                        indices_path: str,
                        scales_path: str,
-                       w_hat_path: Optional[str] = None) -> None:
+                       w_hat_path: Optional[str] = None,
+                       meta_path: Optional[str] = None) -> None:
         '''Load from numpy files - handles both AQLM and VPTQ formats'''
         cb = np.load(codebooks_path)
         idx = np.load(indices_path)
@@ -164,11 +277,15 @@ class VQDataHandler:
             idx = idx.view(np.uint8)
             print("Converted int8 -> uint8")
 
+        self.meta = self._load_meta_file(meta_path)
+
         # Handle different formats:
         # AQLM indices: (K, num_groups, num_codebooks) - 3D array
         # VPTQ indices: (num_groups, K) - 2D array
+        # GPTVQ indices: (num_blocks, groups_per_column, rows_per_group, chunks_per_block) - 4D array
         # AQLM codebooks: (num_codebooks, num_centroids, out_group_size, in_group_size) - 4D
         # VPTQ codebooks: (num_centroids, group_size) - 2D
+        # GPTVQ codebooks: (num_blocks, groups_per_column, num_centroids, vq_dim) - 4D
 
         if idx.ndim == 2 and cb.ndim == 2:
             print(f"Detected VPTQ format:")
@@ -188,10 +305,21 @@ class VQDataHandler:
                 print(f"Converted to standard format:")
                 print(f"  Codebooks: {cb.shape} (num_codebooks, num_centroids, group_size)")
                 print(f"  Indices: {idx.shape} (K, num_groups, num_codebooks)")
+            self.data_format = 'vptq'
+        elif idx.ndim == 4 and cb.ndim == 4:
+            if not self.meta:
+                raise ValueError("GPTVQ grouped format requires meta_path with grouped layout metadata")
+            print("Detected GPTVQ grouped format:")
+            print(f"  Codebooks: {cb.shape} (num_blocks, groups_per_column, num_centroids, vq_dim)")
+            print(f"  Indices:   {idx.shape}")
+            idx = self._normalize_gptvq_indices(idx, self.meta)
+            print(f"  Normalized indices: {idx.shape} (num_blocks, groups_per_column, rows_per_group, chunks_per_block)")
+            self.data_format = 'gptvq'
         elif idx.ndim == 3 and cb.ndim == 4:
             print(f"Detected AQLM format:")
             print(f"  Codebooks: {cb.shape} (num_codebooks, num_centroids, out_gs, in_gs)")
             print(f"  Indices: {idx.shape} (K, num_groups, num_codebooks)")
+            self.data_format = 'aqlm'
         elif idx.ndim == 3 and cb.ndim == 3:
             # AQLM path but codebooks were saved without the out_group_size dimension
             print(f"Detected AQLM (squeezed) format:")
@@ -199,6 +327,7 @@ class VQDataHandler:
             print(f"  Indices: {idx.shape} (K, num_groups, num_codebooks)")
             cb = cb[:, :, np.newaxis, :]  # Expand out_gs=1
             print(f"  Expanded codebooks to: {cb.shape} (num_codebooks, num_centroids, out_gs=1, in_gs)")
+            self.data_format = 'aqlm'
         else:
             raise ValueError(f"Unexpected format: codebooks {cb.ndim}D, indices {idx.ndim}D")
 
@@ -218,6 +347,10 @@ class VQDataHandler:
         '''Dequantize: reconstruct W from codebooks and indices'''
         if self.codebooks is None or self.indices is None:
             raise RuntimeError("need to load data first")
+
+        if self.data_format == 'gptvq':
+            print(f"GPTVQ grouped format: {self.codebooks.shape}")
+            return self._dequantize_gptvq_grouped()
 
         # Special-case K-compressed layout (VPTQ)
         if getattr(self.cfg, 'compress_dim', 'n') == 'k':
@@ -343,6 +476,9 @@ class VQDataHandler:
         '''
         if self.W_reconstructed is None:
             self.dequantize()
+
+        if self.data_format == 'gptvq':
+            return self._prepare_gptvq_preload(dtype=dtype)
 
         # flatten codebooks
         cb_flat = np.concatenate([cb.reshape(-1) for cb in self.codebooks])

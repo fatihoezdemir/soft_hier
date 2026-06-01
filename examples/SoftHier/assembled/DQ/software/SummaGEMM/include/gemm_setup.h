@@ -4,6 +4,11 @@
 #include "flex_group_barrier.h"
 #include "flex_runtime.h"
 #include "gemm.h"
+
+#ifndef VQ_TILE_CODEBOOKS
+#define VQ_TILE_CODEBOOKS 0
+#endif
+
 #if VQ_ENABLED == 1
 typedef struct VQ {
     uint32_t idx_size;
@@ -15,7 +20,9 @@ typedef struct VQ {
     // Addressing Information
 
     // L1 location information
-    uint32_t L1_CB[VQ_NUM_CBS];   //
+    uint32_t L1_CB[VQ_NUM_CBS];
+    uint32_t L1_CB1[VQ_NUM_CBS];
+    uint32_t L1_CB2[VQ_NUM_CBS];
     uint32_t L1_IDX1[VQ_NUM_CBS]; // 2 indices buffers /codebook
     uint32_t L1_IDX2[VQ_NUM_CBS];
 
@@ -299,10 +306,16 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
         }
     }
 #endif
+// Fused kernel dequantizes directly into accumulators; no explicit W double buffer needed.
+#if defined(KERNEL_VARIANT_FUSED) && (KERNEL_VARIANT_FUSED == 1)
+    info.L1_W1 = 0;
+    info.L1_W2 = 0;
+#else
     info.L1_W1 = off;
     off += info.L1_W_size; //
     info.L1_W2 = off;
     off += info.L1_W_size; //
+#endif
     // #endif
 #if VQ_ENABLED == 1
     // Copy codebook addresses array
@@ -342,12 +355,26 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
     info.vq.L1_IDX_size           = single_cb_tile_bytes; // Size per codebook (not total)
     info.vq.L1_CB_size            = VQ_CB_NUM_CENTROIDS * VQ_GROUP_SIZE * VQ_CB_BYTES;
 
-    off += info.L1_W_size; //
-
+#if VQ_TILE_CODEBOOKS == 1
     for (int i = 0; i < VQ_NUM_CBS; i++) {
-        info.vq.L1_CB[i] = off;
-        off += info.vq.L1_CB_size; //+W
+        info.vq.L1_CB1[i] = off;
+        off += info.vq.L1_CB_size;
     }
+    for (int i = 0; i < VQ_NUM_CBS; i++) {
+        info.vq.L1_CB2[i] = off;
+        off += info.vq.L1_CB_size;
+    }
+    for (int i = 0; i < VQ_NUM_CBS; i++) {
+        info.vq.L1_CB[i] = info.vq.L1_CB1[i];
+    }
+#else
+    for (int i = 0; i < VQ_NUM_CBS; i++) {
+        info.vq.L1_CB[i]  = off;
+        info.vq.L1_CB1[i] = info.vq.L1_CB[i];
+        info.vq.L1_CB2[i] = info.vq.L1_CB[i];
+        off += info.vq.L1_CB_size;
+    }
+#endif
 
     // Allocate separate double buffers per codebook (2N buffers total)
     for (int i = 0; i < VQ_NUM_CBS; i++) {
@@ -377,6 +404,7 @@ SummaGEMMInfo SummaGEMMAnaylze(uint64_t X_address, uint64_t W_address, uint64_t 
 #endif
 
 #endif
+    summa_config_assert(off <= ARCH_CLUSTER_TCDM_SIZE, 0xE00B);
     if (flex_get_cluster_id() == 1 && flex_is_dm_core()) {
         printf("\n M N K iter: %d %d %d\n", info.M_iter, info.N_iter, info.K_iter);
     }
